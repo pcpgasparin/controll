@@ -13,7 +13,6 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
 
     <script type="module">
-        // Adicionado o updateDoc na importação para poder editar as cargas de expedição
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, collection, setDoc, doc, serverTimestamp, query, where, addDoc, deleteDoc, updateDoc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
@@ -45,8 +44,20 @@
         // FUNÇÃO DE FAXINA: Remove espaços duplos e garante padrão absoluto
         const norm = (txt) => String(txt || '').replace(/\s+/g, ' ').trim().toUpperCase();
 
+        // FUNÇÃO PARA EXTRAIR DATA DO FIREBASE (Lida com diferentes nomes de campos de data)
+        const extrairData = (docData) => {
+            const camposData = ['dataImportacao', 'dataCorrecao', 'dataRegistro', 'dataCriacao', 'timestamp', 'data'];
+            for (let campo of camposData) {
+                if (docData[campo]) {
+                    if (typeof docData[campo].toDate === 'function') return docData[campo].toDate();
+                    if (typeof docData[campo] === 'string' || typeof docData[campo] === 'number') return new Date(docData[campo]);
+                }
+            }
+            return null;
+        };
+
         // ==========================================
-        // 1. IMPORTAR EXCEL (ESTOQUE INICIAL)
+        // 1. IMPORTAR EXCEL (ESTOQUE INICIAL) COM SOMA INTELIGENTE
         // ==========================================
         window.importarExcel = async () => {
             const fileInput = document.getElementById('excelFile');
@@ -69,6 +80,9 @@
                 document.getElementById('statusUpload').innerText = "Processando e enviando para o banco...";
 
                 try {
+                    // PASSO 1: Agrupar e somar linhas duplicadas do Excel na memória
+                    const mapaEstoqueConsolidado = {};
+
                     for (let linha of planilha) {
                         if (!linha.PRODUTO || !linha.LOTE || linha.QUANTIDADE === undefined) continue;
 
@@ -79,16 +93,37 @@
 
                         if(isNaN(qtd)) continue; 
 
-                        const idDoc = `INI-${prodStr}-${loteStr}`.replace(/\s+/g, '-').toUpperCase();
+                        // Cria uma chave única combinando Produto e Lote
+                        const chaveUnica = `${prodStr}_${loteStr}`;
+                        
+                        if (!mapaEstoqueConsolidado[chaveUnica]) {
+                            mapaEstoqueConsolidado[chaveUnica] = {
+                                produto: prodStr,
+                                lote: loteStr,
+                                quantidade: 0
+                            };
+                        }
+                        
+                        // Soma a quantidade se houver várias linhas iguais
+                        mapaEstoqueConsolidado[chaveUnica].quantidade += qtd;
+                    }
+
+                    // PASSO 2: Enviar os dados já somados para o Firebase
+                    const chaves = Object.keys(mapaEstoqueConsolidado);
+                    
+                    for (let chave of chaves) {
+                        const item = mapaEstoqueConsolidado[chave];
+                        const idDoc = `INI-${item.produto}-${item.lote}`.replace(/\s+/g, '-').toUpperCase();
                         
                         await setDoc(doc(db, "estoque_inicial", idDoc), {
-                            produto: prodStr,
-                            lote: loteStr,
-                            quantidade: qtd,
+                            produto: item.produto,
+                            lote: item.lote,
+                            quantidade: item.quantidade,
                             dataImportacao: serverTimestamp()
                         });
                     }
-                    alert("Estoque Inicial importado com sucesso!");
+
+                    alert("Estoque Inicial importado e consolidado com sucesso!");
                     document.getElementById('statusUpload').innerText = "Pronto!";
                     fileInput.value = ""; 
 
@@ -120,7 +155,24 @@
             const getLoteEfetivo = (prod, lote) => renomeacoesLote[`${prod}_${lote}`] || lote;
 
             const iniciarSeNaoExistir = (chave, prod, loteEfetivo) => {
-                if (!saldos[chave]) saldos[chave] = { produto: prod, lote: loteEfetivo, inicial: 0, produzido: 0, despachado: 0, atual: 0 };
+                if (!saldos[chave]) saldos[chave] = { 
+                    produto: prod, 
+                    lote: loteEfetivo, 
+                    inicial: 0, 
+                    produzido: 0, 
+                    despachado: 0, 
+                    atual: 0,
+                    ultimaData: null 
+                };
+            };
+
+            const atualizarDataLote = (chave, docData) => {
+                const d = extrairData(docData);
+                if (d) {
+                    if (!saldos[chave].ultimaData || d > saldos[chave].ultimaData) {
+                        saldos[chave].ultimaData = d;
+                    }
+                }
             };
 
             dadosAoVivo.iniciais.forEach(d => {
@@ -130,6 +182,7 @@
                 const chave = `${p}_${loteEfetivo}`;
                 iniciarSeNaoExistir(chave, p, loteEfetivo);
                 saldos[chave].inicial += d.quantidade;
+                atualizarDataLote(chave, d);
             });
 
             dadosAoVivo.producao.forEach(d => {
@@ -141,6 +194,7 @@
                     const chave = `${p}_${loteEfetivo}`;
                     iniciarSeNaoExistir(chave, p, loteEfetivo);
                     saldos[chave].produzido += qtdFeita;
+                    atualizarDataLote(chave, d);
                 }
             });
 
@@ -152,6 +206,7 @@
                     const chave = `${p}_${loteEfetivo}`;
                     iniciarSeNaoExistir(chave, p, loteEfetivo);
                     saldos[chave].despachado += item.quantidade;
+                    atualizarDataLote(chave, carga); 
                 });
             });
 
@@ -160,11 +215,19 @@
                 const chave = `${ajuste.produto}_${loteEfetivo}`;
                 iniciarSeNaoExistir(chave, ajuste.produto, loteEfetivo);
                 saldos[chave][ajuste.campo] += ajuste.delta;
+                atualizarDataLote(chave, ajuste);
             });
 
             const listaSaldos = Object.values(saldos).map(item => {
                 item.atual = (item.inicial + item.produzido) - item.despachado;
                 return item;
+            });
+
+            // Ordenar por última data (mais recentes primeiro)
+            listaSaldos.sort((a, b) => {
+                if (!a.ultimaData) return 1;
+                if (!b.ultimaData) return -1;
+                return b.ultimaData - a.ultimaData;
             });
 
             window.dadosGlobaisEstoque = listaSaldos;
@@ -191,7 +254,6 @@
 
             const qExp = query(collection(db, "cargas_expedicao"));
             onSnapshot(qExp, (snap) => {
-                // Pega todas as cargas para garantir que se o lote estiver aguardando despacho ele também saia na exclusão
                 dadosAoVivo.expedicao = snap.docs.filter(d => d.data().status === 'Despachada').map(d => d.data());
                 calcularSaldos();
             });
@@ -263,7 +325,6 @@
             try {
                 document.getElementById('loading').classList.remove('hidden');
 
-                // 1. RECONSTRÓI O MAPA DE NOMES (Para achar os lotes velhos que foram renomeados)
                 const correcoesSnap = await getDocs(collection(db, "correcoes_estoque"));
                 const renomeacoesLote = {};
                 correcoesSnap.forEach(d => {
@@ -274,7 +335,6 @@
                 });
                 const getLoteEfetivo = (prod, loteOrig) => renomeacoesLote[`${prod}_${loteOrig}`] || loteOrig;
 
-                // 2. APAGA INICIAIS
                 const snapInit = await getDocs(collection(db, "estoque_inicial"));
                 for (let d of snapInit.docs) {
                     const docP = norm(d.data().produto);
@@ -284,7 +344,6 @@
                     }
                 }
 
-                // 3. APAGA PRODUÇÃO
                 const snapOps = await getDocs(collection(db, "ordens_producao"));
                 for (let d of snapOps.docs) {
                     const docP = norm(d.data().produto);
@@ -294,7 +353,6 @@
                     }
                 }
 
-                // 4. RETIRA O ITEM DE DENTRO DOS CAMINHÕES (EXPEDIÇÃO)
                 const snapExp = await getDocs(collection(db, "cargas_expedicao"));
                 for (let d of snapExp.docs) {
                     let carga = d.data();
@@ -305,9 +363,9 @@
                             const itemL = norm(item.lote);
                             if (itemP === p && getLoteEfetivo(itemP, itemL) === l) {
                                 temAlteracao = true;
-                                return false; // Remove este item da carga
+                                return false; 
                             }
-                            return true; // Mantém os outros
+                            return true; 
                         });
 
                         if (temAlteracao) {
@@ -316,7 +374,6 @@
                     }
                 }
 
-                // 5. APAGA AS CORREÇÕES E RENOMEAÇÕES DESTE LOTE
                 for (let d of correcoesSnap.docs) {
                     const c = d.data();
                     const docP = norm(c.produto);
@@ -387,6 +444,12 @@
                 const ehProblema = item.atual < 0 || (item.inicial > 0 && item.produzido === 0 && item.despachado === 0);
                 const linhaClasse = ehProblema ? 'bg-orange-100 border-l-4 border-orange-500' : '';
 
+                // Formatar a data para exibição
+                let strData = '-';
+                if (item.ultimaData) {
+                    strData = item.ultimaData.toLocaleDateString('pt-BR') + ' às ' + item.ultimaData.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                }
+
                 tbody.innerHTML += `
                     <tr class="border-b hover:bg-blue-50 transition ${linhaClasse} group/row">
                         <td class="p-3 font-bold text-gray-800">${item.produto}</td>
@@ -394,6 +457,8 @@
                         <td class="p-3 cursor-pointer group" onclick="editarLote('${item.produto}', '${item.lote}')" title="Clique para renomear este Lote">
                             <span class="font-mono text-gray-600 group-hover:text-blue-600">${item.lote} ${iconeEdit}</span>
                         </td>
+
+                        <td class="p-3 text-sm text-gray-500 font-medium">${strData}</td>
                         
                         <td class="p-3 text-center cursor-pointer group" onclick="editarValor('${item.produto}', '${item.lote}', 'Estoque Inicial', 'inicial', ${item.inicial})" title="Editar Estoque Inicial">
                             <span class="text-gray-500 group-hover:text-blue-600">${item.inicial} ${iconeEdit}</span>
@@ -552,6 +617,7 @@
                         <tr>
                             <th class="p-3 whitespace-nowrap">Produto</th>
                             <th class="p-3 whitespace-nowrap">Lote ✎</th>
+                            <th class="p-3 whitespace-nowrap" title="Data do último registro (importação, produção ou expedição)">Últ. Movimentação</th>
                             <th class="p-3 text-center whitespace-nowrap" title="Estoque importado via Excel">Estoque Inicial ✎</th>
                             <th class="p-3 text-center whitespace-nowrap" title="Entradas das Ordens de Produção">Produzido (Entrou) ✎</th>
                             <th class="p-3 text-center whitespace-nowrap" title="Saídas confirmadas pela Expedição">Despachado (Saiu) ✎</th>

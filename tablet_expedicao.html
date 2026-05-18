@@ -34,7 +34,9 @@
                 try {
                     await updateDoc(doc(db, "cargas_expedicao", idCarga), {
                         status: 'Despachada',
-                        dataDespacho: serverTimestamp()
+                        dataDespacho: serverTimestamp(),
+                        // Adicionado dataRegistro para padronizar com a leitura do Dashboard PCP
+                        dataRegistro: serverTimestamp() 
                     });
                 } catch (error) {
                     console.error("Erro ao despachar:", error);
@@ -49,7 +51,9 @@
                 try {
                     await updateDoc(doc(db, "cargas_expedicao", idCarga), {
                         status: 'Retida',
-                        dataRetencao: serverTimestamp()
+                        dataRetencao: serverTimestamp(),
+                        // Adicionado dataRegistro para padronizar com a leitura do Dashboard PCP
+                        dataRegistro: serverTimestamp()
                     });
                 } catch (error) {
                     console.error("Erro ao reter:", error);

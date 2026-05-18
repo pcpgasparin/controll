@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Painel do Operador - Produção</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { user-select: none; -webkit-user-select: none; }
+        .btn-press { transition: transform 0.1s, opacity 0.1s; }
+        .btn-press:active { transform: scale(0.95); opacity: 0.8; }
+    </style>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Configuração do Firebase atualizada
+        const firebaseConfig = {
+            apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
+            authDomain: "basededados-7ccdd.firebaseapp.com",
+            projectId: "basededados-7ccdd",
+            storageBucket: "basededados-7ccdd.firebasestorage.app",
+            messagingSenderId: "811772325586",
+            appId: "1:811772325586:web:09b658831a49b621fac70b"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const opsCollection = collection(db, "ordens_producao");
+
+        window.registrarPalete = async (id, btnElement) => {
+            btnElement.classList.add('scale-95', 'opacity-75');
+            setTimeout(() => btnElement.classList.remove('scale-95', 'opacity-75'), 150);
+
+            try {
+                const opRef = doc(db, "ordens_producao", id);
+                await updateDoc(opRef, { paletesFeitos: increment(1) });
+            } catch (error) {
+                console.error("Erro ao registrar palete:", error);
+                alert("Erro de conexão. Tente novamente.");
+            }
+        };
+
+        window.registrarParcial = async (id, medida) => {
+            let qtdStr = prompt(`Digite a quantidade de ${medida} avulsos (Palete Incompleto):`);
+            if (qtdStr === null || qtdStr.trim() === "") return; 
+            
+            let qtd = parseInt(qtdStr);
+            if (isNaN(qtd) || qtd <= 0) {
+                alert("Quantidade inválida! Digite apenas números maiores que zero.");
+                return;
+            }
+
+            try {
+                const opRef = doc(db, "ordens_producao", id);
+                await updateDoc(opRef, { fardosParciais: increment(qtd) });
+            } catch (error) {
+                console.error("Erro ao registrar parcial:", error);
+                alert("Erro de conexão. Tente novamente.");
+            }
+        };
+
+        window.finalizarOP = async (id, produto) => {
+            if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela.`)) {
+                try {
+                    const opRef = doc(db, "ordens_producao", id);
+                    await updateDoc(opRef, { status: 'Finalizada' });
+                } catch (error) {
+                    console.error("Erro ao finalizar OP:", error);
+                    alert("Erro de conexão. Tente novamente.");
+                }
+            }
+        };
+
+        const q = query(opsCollection, where("status", "==", "Aberta"));
+        onSnapshot(q, (snapshot) => {
+            const painel = document.getElementById('painelOperador');
+            painel.innerHTML = ''; 
+            
+            if (snapshot.empty) {
+                painel.innerHTML = `
+                    <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                        <svg class="w-20 h-20 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <h2 class="text-3xl font-bold">Nenhuma Ordem de Produção Aberta</h2>
+                        <p class="text-xl mt-2">Aguardando liberação do PCP...</p>
+                    </div>
+                `;
+                return;
+            }
+
+            snapshot.forEach((docSnap) => {
+                const op = docSnap.data();
+                const id = docSnap.id;
+                
+                const totalProduzido = (op.paletesFeitos * op.qtdPorPalete) + op.fardosParciais;
+                
+                painel.innerHTML += `
+                    <div class="bg-white rounded-2xl shadow-xl border-4 border-gray-200 p-4 flex flex-col h-full">
+                        <div class="text-center mb-4">
+                            <h2 class="text-3xl font-black text-gray-800 leading-tight">${op.produto}</h2>
+                            <div class="flex justify-center gap-4 mt-2">
+                                <span class="bg-blue-100 text-blue-800 px-4 py-1 rounded-full text-xl font-bold font-mono border border-blue-300">LOTE: ${op.lote}</span>
+                                <span class="bg-gray-100 text-gray-700 px-4 py-1 rounded-full text-lg font-semibold border border-gray-300">META: ${op.metaTotal} ${op.medida}</span>
+                            </div>
+                        </div>
+
+                        <button 
+                            onclick="registrarPalete('${id}', this)" 
+                            class="flex-1 w-full ${op.corBotao} text-white rounded-xl shadow-lg flex flex-col items-center justify-center p-6 btn-press min-h-[250px] mb-4">
+                            <span class="text-6xl font-black mb-2">+1</span>
+                            <span class="text-3xl font-bold tracking-wide">PALETE</span>
+                            <span class="text-xl font-medium mt-2 bg-black bg-opacity-20 px-4 py-1 rounded-full">Contém ${op.qtdPorPalete} ${op.medida}</span>
+                        </button>
+
+                        <div class="bg-gray-100 rounded-lg p-3 text-center mb-4 border border-gray-200">
+                            <p class="text-lg text-gray-600 font-semibold uppercase">Total Produzido Agora</p>
+                            <p class="text-4xl font-black text-green-600">${totalProduzido} <span class="text-2xl text-gray-500">${op.medida}</span></p>
+                            <p class="text-md text-gray-500 mt-1">(${op.paletesFeitos} Paletes fechados + ${op.fardosParciais} avulsos)</p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4 mt-auto">
+                            <button onclick="registrarParcial('${id}', '${op.medida}')" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold text-lg py-4 px-2 rounded-lg shadow btn-press flex items-center justify-center gap-2">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                Palete Incompleto
+                            </button>
+                            
+                            <button onclick="finalizarOP('${id}', '${op.produto}')" class="bg-gray-800 hover:bg-black text-white font-bold text-lg py-4 px-2 rounded-lg shadow btn-press flex items-center justify-center gap-2">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                Finalizar OP
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+        });
+    </script>
+</head>
+<body class="bg-slate-200 font-sans min-h-screen flex flex-col">
+
+    <header class="bg-gray-900 text-white p-4 shadow-lg flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            <h1 class="text-3xl font-black tracking-wider">APONTAMENTO DE PRODUÇÃO</h1>
+        </div>
+        <div id="relogio" class="text-2xl font-mono font-bold bg-gray-800 px-4 py-2 rounded-lg border border-gray-700">--:--:--</div>
+    </header>
+
+    <main class="flex-1 p-6">
+        <div id="painelOperador" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 h-full auto-rows-fr"></div>
+    </main>
+
+    <script>
+        setInterval(() => {
+            const agora = new Date();
+            document.getElementById('relogio').innerText = agora.toLocaleTimeString('pt-BR');
+        }, 1000);
+    </script>
+</body>
+</html>

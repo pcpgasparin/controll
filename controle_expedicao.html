@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PCP - Gestão de Expedição</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, setDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Sua Chave do Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
+            authDomain: "basededados-7ccdd.firebaseapp.com",
+            projectId: "basededados-7ccdd",
+            storageBucket: "basededados-7ccdd.firebasestorage.app",
+            messagingSenderId: "811772325586",
+            appId: "1:811772325586:web:09b658831a49b621fac70b"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const cargasCollection = collection(db, "cargas_expedicao");
+
+        /// Base de Produtos Completa
+const baseProdutos = {
+    "979 - ACUCAR REFINADO 10X1": { medida: "FD" },
+    "671 - ACUCAR CRISTAL 10X1": { medida: "FD" },
+    "9009 - ACUCAR EXTRAFINO 10X1": { medida: "FD" },
+    "9000 - ACUCAR DEMERARA 10X1": { medida: "FD" },
+    "669 - AÇUCAR CRISTAL 15X2": { medida: "FD" },
+    "670 - ACUCAR CRISTAL 6X5": { medida: "FD" },
+    "8489 - ACUCAR CRISTAL YPIRANGA 6X5": { medida: "FD" },
+    "745 - AÇUCAR CRISTAL MEL DE ENG. 6X5": { medida: "FD" },
+    "754 - ACUCAR REFINADO 6X5": { medida: "FD" },
+    "1541 - AÇUCAR CRISTAL 25KG": { medida: "SC" },
+    "7708 - ACUCAR EXTRAF. MEL DE ENG. 25 KG": { medida: "SC" },
+    "7697 - ACUCAR CRISTAL MEL DE ENGE. 25KG": { medida: "SC" },
+    "2517 - ACUCAR EXTRAFINO 25 KG": { medida: "SC" },
+    "730 - ACUCAR VARREDURA SC 25 KG": { medida: "SC" },
+    "1688 - ARROZ BRANCO GASPARIN TIPO 1 6X5": { medida: "FD" },
+    "1690 - ARROZ PARBOILIZADO GASPARIN TIPO 1 6X5": { medida: "FD" },
+    "1691 - ARROZ PARBOILIZADO GASPARIN TIPO 1 15X2": { medida: "FD" },
+    "3114 - ARROZ PARBOILIZADO GASPARIN TIPO 1 30X1": { medida: "FD" },
+    "3123 - ARROZ PARBOILIZADO GASPARIN TIPO 1 10X1": { medida: "FD" },
+    "3235 - ARROZ BRANCO GASPARIN TIPO 1 30X1": { medida: "FD" },
+    "3240 - ARROZ BRANCO GASPARIN TIPO 1 10X1": { medida: "FD" },
+    "4852 - ARROZ INTEGRAL GASPARIN TIPO 1 10X1": { medida: "FD" },
+    "8487 - ARROZ BRANCO YPIRANGA TIPO 1 6X5": { medida: "FD" },
+    "8488 - ARROZ PARBOILIZADO YPIRANGA TIPO 1 6X5": { Bird: "FD", medida: "FD" },
+    "9315 - ARROZ BRANCO NONA VALENTINA TIPO 2 6X5": { medida: "FD" },
+    "1888 - FEIJAO PRETO GASPARIN TIPO 1 30X1": { medida: "FD" },
+    "7771 - FEIJAO PRETO NONA VALENTINA TIPO 1 30X1": { medida: "FD" },
+    "8486 - FEIJAO PRETO YPIRANGA TIPO 1 30X1": { medida: "FD" },
+    "8513 - FEIJAO PRETO GASPARIN TIPO 1 25KG": { medida: "SC" },
+    "210 - AÇUCAR CRISTAL 50 KG": { medida: "SC" },
+    "3112 - AÇUCAR MASCAVO GASPARIN 10X1": { medida: "FD" },
+    "3113 - AÇUCAR MASCAVO GASPARIN 20X500": { medida: "FD" },
+    "8058 - AÇUCAR MASCAVO MEL DO ENGENHO 10x1": { medida: "FD" },
+    "8059 - AÇUCAR MASCAVO MEL DO ENGENHO 20x500": { medida: "FD" }
+};
+
+        let itensCargaAtual = [];
+
+        window.carregarProdutos = () => {
+            const selectProduto = document.getElementById('produto');
+            selectProduto.innerHTML = '<option value="">Selecione o Produto para Adicionar...</option>';
+            for (let prod in baseProdutos) {
+                selectProduto.innerHTML += `<option value="${prod}">${prod}</option>`;
+            }
+        };
+
+        window.atualizarMedida = () => {
+            const val = document.getElementById('produto').value;
+            if(val) document.getElementById('qtd').placeholder = `Qtd em ${baseProdutos[val].medida}`;
+        };
+
+        window.adicionarItem = () => {
+            const produtoSelecionado = document.getElementById('produto').value;
+            const lote = document.getElementById('lote').value.toUpperCase().trim();
+            const quantidade = parseInt(document.getElementById('qtd').value);
+
+            if (!produtoSelecionado || !lote || !quantidade || isNaN(quantidade)) {
+                alert("Preencha Produto, Lote e Quantidade para adicionar!");
+                return;
+            }
+
+            const produtoNome = produtoSelecionado.split(' - ')[1] || produtoSelecionado;
+            const produtoCod = produtoSelecionado.split(' - ')[0] || "";
+            const medida = baseProdutos[produtoSelecionado].medida;
+
+            itensCargaAtual.push({
+                codigo: produtoCod,
+                produto: produtoNome,
+                lote: lote,
+                quantidade: quantidade,
+                medida: medida
+            });
+
+            document.getElementById('produto').value = '';
+            document.getElementById('lote').value = '';
+            document.getElementById('qtd').value = '';
+            
+            atualizarTabelaItens();
+        };
+
+        window.removerItem = (index) => {
+            itensCargaAtual.splice(index, 1);
+            atualizarTabelaItens();
+        };
+
+        window.atualizarTabelaItens = () => {
+            const lista = document.getElementById('listaItensCarga');
+            lista.innerHTML = '';
+            
+            if (itensCargaAtual.length === 0) {
+                lista.innerHTML = '<tr><td colspan="4" class="p-3 text-center text-gray-500">Nenhum item adicionado ainda.</td></tr>';
+                return;
+            }
+
+            itensCargaAtual.forEach((item, index) => {
+                lista.innerHTML += `
+                    <tr class="border-b bg-gray-50">
+                        <td class="p-2 font-bold text-gray-800">${item.produto}</td>
+                        <td class="p-2 font-mono text-red-600 font-bold">${item.lote}</td>
+                        <td class="p-2 font-bold text-blue-700">${item.quantidade} ${item.medida}</td>
+                        <td class="p-2 text-center">
+                            <button onclick="removerItem(${index})" class="text-red-500 hover:text-red-700 font-bold text-sm">X Remover</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        };
+
+        window.lancarCargaCompleta = async () => {
+            const numeroCarga = document.getElementById('numeroCarga').value.trim();
+
+            if (!numeroCarga) {
+                alert("Você precisa digitar o Nº da Carga!");
+                return;
+            }
+
+            if (itensCargaAtual.length === 0) {
+                alert("Adicione pelo menos um produto na carga antes de liberar!");
+                return;
+            }
+
+            const idCarga = `Carga-${numeroCarga}`;
+
+            try {
+                await setDoc(doc(db, "cargas_expedicao", idCarga), {
+                    numeroCarga: numeroCarga,
+                    status: 'Aguardando Despacho',
+                    itens: itensCargaAtual,
+                    dataLancamento: serverTimestamp()
+                });
+                
+                alert(`Carga ${numeroCarga} enviada para a Expedição com ${itensCargaAtual.length} itens!`);
+                
+                document.getElementById('numeroCarga').value = '';
+                itensCargaAtual = []; 
+                atualizarTabelaItens();
+
+            } catch (error) {
+                console.error("Erro ao lançar Carga: ", error);
+                alert("Erro ao lançar Carga.");
+            }
+        };
+
+        // Função Nova: Re-liberar carga que ficou para outro dia
+        window.reliberarCarga = async (idCarga) => {
+            if(confirm("Deseja reativar esta carga e enviar novamente para a Expedição?")) {
+                await updateDoc(doc(db, "cargas_expedicao", idCarga), {
+                    status: 'Aguardando Despacho',
+                    dataReativacao: serverTimestamp()
+                });
+            }
+        };
+
+        window.excluirCarga = async (id) => {
+            if(confirm("Deseja cancelar esta carga completa definitivamente?")){
+                await deleteDoc(doc(db, "cargas_expedicao", id));
+            }
+        };
+
+        // Query agora busca tanto Aguardando quanto Retida
+        const q = query(cargasCollection, where("status", "in", ["Aguardando Despacho", "Retida"]));
+        onSnapshot(q, (snapshot) => {
+            const tabela = document.getElementById('tabelaCargas');
+            tabela.innerHTML = '';
+            
+            snapshot.forEach((docSnap) => {
+                const carga = docSnap.data();
+                const id = docSnap.id;
+                
+                let listaProdutosHTML = '<ul class="list-disc pl-5 text-sm">';
+                carga.itens.forEach(item => {
+                    listaProdutosHTML += `<li><b>${item.quantidade} ${item.medida}</b> - ${item.produto} (Lote: <span class="text-red-600 font-mono">${item.lote}</span>)</li>`;
+                });
+                listaProdutosHTML += '</ul>';
+
+                // Lógica Visual Dependendo do Status
+                let badgeStatus = '';
+                let botoesAcao = '';
+
+                if (carga.status === 'Aguardando Despacho') {
+                    badgeStatus = `<span class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-bold animate-pulse block mb-1">Aguardando Logística...</span>`;
+                    botoesAcao = `<button onclick="excluirCarga('${id}')" class="text-red-500 hover:text-red-700 font-bold w-full text-center mt-2 border border-red-200 rounded py-1">Cancelar Carga</button>`;
+                } else if (carga.status === 'Retida') {
+                    badgeStatus = `<span class="bg-red-100 text-red-800 px-2 py-1 rounded font-bold block mb-1">Ficou Retida (Não Carregou)</span>`;
+                    botoesAcao = `
+                        <button onclick="reliberarCarga('${id}')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold w-full text-center mb-2 py-2 rounded">↻ Re-Liberar Hoje</button>
+                        <button onclick="excluirCarga('${id}')" class="text-red-500 hover:text-red-700 font-bold w-full text-center text-sm">Cancelar Definitivo</button>
+                    `;
+                }
+
+                tabela.innerHTML += `
+                    <tr class="border-b bg-white hover:bg-gray-50">
+                        <td class="p-3 font-black text-blue-800 text-xl align-top">${carga.numeroCarga}</td>
+                        <td class="p-3 align-top">${listaProdutosHTML}</td>
+                        <td class="p-3 text-center align-top">
+                            ${badgeStatus}
+                        </td>
+                        <td class="p-3 align-top">
+                            ${botoesAcao}
+                        </td>
+                    </tr>
+                `;
+            });
+        });
+
+        window.onload = () => {
+            carregarProdutos();
+            atualizarTabelaItens();
+        };
+
+        document.getElementById('produto').addEventListener('change', window.atualizarMedida);
+    </script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+
+    <nav class="bg-blue-900 text-white p-4 shadow-md border-b-4 border-orange-500">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                Painel PCP - Controle de Saídas (Expedição)
+            </h1>
+            <span class="text-sm bg-orange-600 px-3 py-1 rounded font-bold">Módulo Gestão Logística</span>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto p-6 mt-4">
+        
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            
+            <div class="lg:col-span-1 bg-white rounded-lg shadow-lg p-6 border-t-4 border-orange-500">
+                <h2 class="text-xl font-semibold mb-4 text-gray-800 border-b pb-2">1. Inserir Produto</h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Produto a Carregar</label>
+                        <select id="produto" class="w-full p-2 border border-gray-300 rounded focus:ring-orange-500 focus:border-orange-500 bg-gray-50"></select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Lote Exigido</label>
+                        <input type="text" id="lote" placeholder="Ex: 0512" class="w-full p-2 border-2 border-red-300 rounded uppercase focus:ring-red-500 focus:border-red-500 font-mono text-lg bg-red-50">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Qtd Total (Saída)</label>
+                        <input type="number" id="qtd" placeholder="Quantidade" class="w-full p-2 border border-gray-300 rounded focus:ring-orange-500 focus:border-orange-500 font-bold text-lg">
+                    </div>
+
+                    <button onclick="adicionarItem()" class="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 px-4 rounded shadow transition duration-200 uppercase mt-2">
+                        + Adicionar à Carga
+                    </button>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2 bg-white rounded-lg shadow-lg p-6 border-t-4 border-gray-800 flex flex-col">
+                <h2 class="text-xl font-semibold mb-4 text-gray-800 border-b pb-2">2. Resumo da Carga (Montagem)</h2>
+                
+                <div class="overflow-y-auto mb-4 border border-gray-200 rounded flex-1">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th class="p-2 border-b">Produto</th>
+                                <th class="p-2 border-b">Lote</th>
+                                <th class="p-2 border-b">Qtd</th>
+                                <th class="p-2 border-b text-center">Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody id="listaItensCarga"></tbody>
+                    </table>
+                </div>
+
+                <div class="mt-auto bg-orange-50 p-4 rounded-lg border-2 border-orange-200">
+                    <label class="block text-sm font-black text-orange-800 mb-1 uppercase">Nº Oficial da Carga (Pedido)</label>
+                    <div class="flex gap-4">
+                        <input type="text" id="numeroCarga" placeholder="Ex: 026487" class="flex-1 p-3 border-2 border-orange-300 rounded focus:ring-orange-500 focus:border-orange-500 font-black text-2xl text-gray-800">
+                        
+                        <button onclick="lancarCargaCompleta()" class="bg-orange-600 hover:bg-orange-700 text-white font-black py-3 px-8 rounded shadow-lg transition duration-200 text-xl uppercase tracking-wide">
+                            LIBERAR CARGA
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6 border-t-4 border-blue-500">
+            <h2 class="text-xl font-semibold mb-4 text-gray-800 border-b pb-2">Monitoramento Ativo: Cargas na Doca</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-200 text-slate-700">
+                            <th class="p-3 rounded-tl w-1/6">Nº Carga</th>
+                            <th class="p-3 w-3/6">Itens Exigidos (Produto, Qtd e Lote)</th>
+                            <th class="p-3 text-center w-1/6">Status</th>
+                            <th class="p-3 text-center rounded-tr w-1/6">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabelaCargas"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

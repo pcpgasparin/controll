@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PCP - Dashboard de Estoque Real-Time</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Bibliotecas para ler Excel e gerar Gráficos -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Plugin para mostrar o número no topo da barra do gráfico -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+
+    <script type="module">
+        // Adicionado o updateDoc na importação para poder editar as cargas de expedição
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, setDoc, doc, serverTimestamp, query, where, addDoc, deleteDoc, updateDoc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Sua Chave do Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
+            authDomain: "basededados-7ccdd.firebaseapp.com",
+            projectId: "basededados-7ccdd",
+            storageBucket: "basededados-7ccdd.firebasestorage.app",
+            messagingSenderId: "811772325586",
+            appId: "1:811772325586:web:09b658831a49b621fac70b"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let meuGrafico = null; 
+        window.dadosGlobaisEstoque = [];
+
+        const dadosAoVivo = {
+            iniciais: [],
+            producao: [],
+            expedicao: [],
+            correcoes: []
+        };
+
+        Chart.register(ChartDataLabels);
+
+        // FUNÇÃO DE FAXINA: Remove espaços duplos e garante padrão absoluto
+        const norm = (txt) => String(txt || '').replace(/\s+/g, ' ').trim().toUpperCase();
+
+        // ==========================================
+        // 1. IMPORTAR EXCEL (ESTOQUE INICIAL)
+        // ==========================================
+        window.importarExcel = async () => {
+            const fileInput = document.getElementById('excelFile');
+            if (!fileInput.files.length) {
+                alert("Selecione um arquivo Excel (.xlsx) primeiro!");
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = async (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const primeiraAba = workbook.SheetNames[0];
+                const planilha = XLSX.utils.sheet_to_json(workbook.Sheets[primeiraAba], { raw: false });
+
+                if (planilha.length === 0) return alert("A planilha está vazia!");
+
+                document.getElementById('statusUpload').innerText = "Processando e enviando para o banco...";
+
+                try {
+                    for (let linha of planilha) {
+                        if (!linha.PRODUTO || !linha.LOTE || linha.QUANTIDADE === undefined) continue;
+
+                        const prodStr = norm(linha.PRODUTO);
+                        const loteStr = norm(linha.LOTE);
+                        const qtdLimpa = String(linha.QUANTIDADE).replace(/\./g, '').replace(/,/g, '');
+                        const qtd = parseInt(qtdLimpa);
+
+                        if(isNaN(qtd)) continue; 
+
+                        const idDoc = `INI-${prodStr}-${loteStr}`.replace(/\s+/g, '-').toUpperCase();
+                        
+                        await setDoc(doc(db, "estoque_inicial", idDoc), {
+                            produto: prodStr,
+                            lote: loteStr,
+                            quantidade: qtd,
+                            dataImportacao: serverTimestamp()
+                        });
+                    }
+                    alert("Estoque Inicial importado com sucesso!");
+                    document.getElementById('statusUpload').innerText = "Pronto!";
+                    fileInput.value = ""; 
+
+                } catch (error) {
+                    console.error("Erro:", error);
+                    alert("Erro ao enviar dados para o Firebase.");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        };
+
+        // ==========================================
+        // 2. MOTOR DE CÁLCULO AO VIVO
+        // ==========================================
+        const calcularSaldos = () => {
+            const saldos = {}; 
+            const renomeacoesLote = {};
+            const ajustesValores = [];
+
+            dadosAoVivo.correcoes.forEach(c => {
+                const p = norm(c.produto);
+                if (c.tipo === 'renomear_lote') {
+                    renomeacoesLote[`${p}_${norm(c.loteAntigo)}`] = norm(c.loteNovo);
+                } else if (c.tipo === 'ajuste_valor') {
+                    ajustesValores.push({...c, produto: p, lote: norm(c.lote)});
+                }
+            });
+
+            const getLoteEfetivo = (prod, lote) => renomeacoesLote[`${prod}_${lote}`] || lote;
+
+            const iniciarSeNaoExistir = (chave, prod, loteEfetivo) => {
+                if (!saldos[chave]) saldos[chave] = { produto: prod, lote: loteEfetivo, inicial: 0, produzido: 0, despachado: 0, atual: 0 };
+            };
+
+            dadosAoVivo.iniciais.forEach(d => {
+                const p = norm(d.produto);
+                const l = norm(d.lote);
+                const loteEfetivo = getLoteEfetivo(p, l);
+                const chave = `${p}_${loteEfetivo}`;
+                iniciarSeNaoExistir(chave, p, loteEfetivo);
+                saldos[chave].inicial += d.quantidade;
+            });
+
+            dadosAoVivo.producao.forEach(d => {
+                const qtdFeita = (d.paletesFeitos * d.qtdPorPalete) + d.fardosParciais;
+                if (qtdFeita > 0) {
+                    const p = norm(d.produto);
+                    const l = norm(d.lote);
+                    const loteEfetivo = getLoteEfetivo(p, l);
+                    const chave = `${p}_${loteEfetivo}`;
+                    iniciarSeNaoExistir(chave, p, loteEfetivo);
+                    saldos[chave].produzido += qtdFeita;
+                }
+            });
+
+            dadosAoVivo.expedicao.forEach(carga => {
+                carga.itens.forEach(item => {
+                    const p = norm(item.produto);
+                    const l = norm(item.lote);
+                    const loteEfetivo = getLoteEfetivo(p, l);
+                    const chave = `${p}_${loteEfetivo}`;
+                    iniciarSeNaoExistir(chave, p, loteEfetivo);
+                    saldos[chave].despachado += item.quantidade;
+                });
+            });
+
+            ajustesValores.forEach(ajuste => {
+                const loteEfetivo = getLoteEfetivo(ajuste.produto, ajuste.lote);
+                const chave = `${ajuste.produto}_${loteEfetivo}`;
+                iniciarSeNaoExistir(chave, ajuste.produto, loteEfetivo);
+                saldos[chave][ajuste.campo] += ajuste.delta;
+            });
+
+            const listaSaldos = Object.values(saldos).map(item => {
+                item.atual = (item.inicial + item.produzido) - item.despachado;
+                return item;
+            });
+
+            window.dadosGlobaisEstoque = listaSaldos;
+            popularFiltros(listaSaldos);
+            filtrarTabela(); 
+            document.getElementById('loading').classList.add('hidden');
+        };
+
+        // ==========================================
+        // 3. LISTENERS DO FIREBASE (OUVINDO 24/7)
+        // ==========================================
+        window.iniciarEscutaRealTime = () => {
+            document.getElementById('loading').classList.remove('hidden');
+
+            onSnapshot(collection(db, "estoque_inicial"), (snap) => {
+                dadosAoVivo.iniciais = snap.docs.map(d => d.data());
+                calcularSaldos();
+            });
+
+            onSnapshot(collection(db, "ordens_producao"), (snap) => {
+                dadosAoVivo.producao = snap.docs.map(d => d.data());
+                calcularSaldos();
+            });
+
+            const qExp = query(collection(db, "cargas_expedicao"));
+            onSnapshot(qExp, (snap) => {
+                // Pega todas as cargas para garantir que se o lote estiver aguardando despacho ele também saia na exclusão
+                dadosAoVivo.expedicao = snap.docs.filter(d => d.data().status === 'Despachada').map(d => d.data());
+                calcularSaldos();
+            });
+
+            onSnapshot(collection(db, "correcoes_estoque"), (snap) => {
+                dadosAoVivo.correcoes = snap.docs.map(d => d.data());
+                calcularSaldos();
+            });
+        };
+
+        // ==========================================
+        // 4. EDIÇÃO E EXCLUSÃO CIRÚRGICA
+        // ==========================================
+        window.editarValor = async (produto, lote, campoVisual, campoDB, valorAtual) => {
+            const novoValorStr = prompt(`🛠 CORREÇÃO DE SALDO:\nProduto: ${produto} | Lote: ${lote}\nCampo: ${campoVisual}\n\nValor Atual no sistema: ${valorAtual}\nDigite o NOVO valor correto:`, valorAtual);
+            
+            if (novoValorStr === null || novoValorStr.trim() === "") return;
+            
+            const novoValor = parseInt(novoValorStr);
+            if (isNaN(novoValor) || novoValor < 0) return alert("Valor inválido! Digite apenas números.");
+
+            const delta = novoValor - valorAtual;
+            if (delta === 0) return; 
+
+            if (confirm(`Confirmar alteração de ${valorAtual} para ${novoValor}?`)) {
+                try {
+                    await addDoc(collection(db, "correcoes_estoque"), {
+                        tipo: 'ajuste_valor',
+                        produto: norm(produto),
+                        lote: norm(lote),
+                        campo: campoDB,
+                        delta: delta,
+                        dataCorrecao: serverTimestamp()
+                    });
+                } catch(e) {
+                    alert("Erro ao salvar correção.");
+                }
+            }
+        };
+
+        window.editarLote = async (produto, loteAntigo) => {
+            const novoLote = prompt(`🛠 CORREÇÃO DE NOME DO LOTE:\nProduto: ${produto}\nLote Atual: ${loteAntigo}\n\nDigite o NOVO Lote para unificar o histórico:`, loteAntigo);
+            
+            if (!novoLote || novoLote.trim() === "" || norm(novoLote) === norm(loteAntigo)) return;
+
+            if (confirm(`Atenção: Todo o saldo do lote ${loteAntigo} será movido para o lote ${norm(novoLote)}. Confirmar?`)) {
+                try {
+                    await addDoc(collection(db, "correcoes_estoque"), {
+                        tipo: 'renomear_lote',
+                        produto: norm(produto),
+                        loteAntigo: norm(loteAntigo),
+                        loteNovo: norm(novoLote),
+                        dataCorrecao: serverTimestamp()
+                    });
+                } catch(e) {
+                    alert("Erro ao renomear lote.");
+                }
+            }
+        };
+
+        window.excluirLoteCompleto = async (produto, lote) => {
+            const p = norm(produto);
+            const l = norm(lote);
+
+            if (!confirm(`💣 ATENÇÃO EXTREMA!\nVocê está prestes a EXCLUIR DEFINITIVAMENTE o Lote [${l}] do produto [${p}].\n\nIsso apagará o Estoque Inicial, a Produção, e removerá este lote de todas as cargas expedidas.\nTem certeza ABSOLUTA que deseja continuar?`)) {
+                return;
+            }
+
+            try {
+                document.getElementById('loading').classList.remove('hidden');
+
+                // 1. RECONSTRÓI O MAPA DE NOMES (Para achar os lotes velhos que foram renomeados)
+                const correcoesSnap = await getDocs(collection(db, "correcoes_estoque"));
+                const renomeacoesLote = {};
+                correcoesSnap.forEach(d => {
+                    const c = d.data();
+                    if (c.tipo === 'renomear_lote') {
+                        renomeacoesLote[`${norm(c.produto)}_${norm(c.loteAntigo)}`] = norm(c.loteNovo);
+                    }
+                });
+                const getLoteEfetivo = (prod, loteOrig) => renomeacoesLote[`${prod}_${loteOrig}`] || loteOrig;
+
+                // 2. APAGA INICIAIS
+                const snapInit = await getDocs(collection(db, "estoque_inicial"));
+                for (let d of snapInit.docs) {
+                    const docP = norm(d.data().produto);
+                    const docL = norm(d.data().lote);
+                    if (docP === p && getLoteEfetivo(docP, docL) === l) {
+                        await deleteDoc(doc(db, "estoque_inicial", d.id));
+                    }
+                }
+
+                // 3. APAGA PRODUÇÃO
+                const snapOps = await getDocs(collection(db, "ordens_producao"));
+                for (let d of snapOps.docs) {
+                    const docP = norm(d.data().produto);
+                    const docL = norm(d.data().lote);
+                    if (docP === p && getLoteEfetivo(docP, docL) === l) {
+                        await deleteDoc(doc(db, "ordens_producao", d.id));
+                    }
+                }
+
+                // 4. RETIRA O ITEM DE DENTRO DOS CAMINHÕES (EXPEDIÇÃO)
+                const snapExp = await getDocs(collection(db, "cargas_expedicao"));
+                for (let d of snapExp.docs) {
+                    let carga = d.data();
+                    if (carga.itens && carga.itens.length > 0) {
+                        let temAlteracao = false;
+                        let novosItens = carga.itens.filter(item => {
+                            const itemP = norm(item.produto);
+                            const itemL = norm(item.lote);
+                            if (itemP === p && getLoteEfetivo(itemP, itemL) === l) {
+                                temAlteracao = true;
+                                return false; // Remove este item da carga
+                            }
+                            return true; // Mantém os outros
+                        });
+
+                        if (temAlteracao) {
+                            await updateDoc(doc(db, "cargas_expedicao", d.id), { itens: novosItens });
+                        }
+                    }
+                }
+
+                // 5. APAGA AS CORREÇÕES E RENOMEAÇÕES DESTE LOTE
+                for (let d of correcoesSnap.docs) {
+                    const c = d.data();
+                    const docP = norm(c.produto);
+                    const ehAjusteDesseLote = c.tipo === 'ajuste_valor' && docP === p && getLoteEfetivo(docP, norm(c.lote)) === l;
+                    const ehRenomeacaoDesseLote = c.tipo === 'renomear_lote' && docP === p && (norm(c.loteNovo) === l || norm(c.loteAntigo) === l);
+                    
+                    if (ehAjusteDesseLote || ehRenomeacaoDesseLote) {
+                        await deleteDoc(doc(db, "correcoes_estoque", d.id));
+                    }
+                }
+
+            } catch (error) {
+                console.error("Erro ao excluir lote:", error);
+                alert("Erro ao tentar excluir o Lote do banco de dados.");
+                document.getElementById('loading').classList.add('hidden');
+            }
+        };
+
+        // ==========================================
+        // 5. TABELAS, FILTROS E GRÁFICOS
+        // ==========================================
+        window.filtrarTabela = () => {
+            const filtroProd = document.getElementById('filtroProduto').value;
+            const filtroLote = norm(document.getElementById('filtroLote').value);
+            const ocultarZerados = document.getElementById('ocultarZerados').checked;
+            const mostrarApenasProblemas = document.getElementById('mostrarApenasProblemas').checked;
+            
+            let dadosFiltrados = window.dadosGlobaisEstoque;
+
+            if (filtroProd) dadosFiltrados = dadosFiltrados.filter(item => item.produto === filtroProd);
+            if (filtroLote) dadosFiltrados = dadosFiltrados.filter(item => item.lote === filtroLote);
+            
+            if (ocultarZerados) {
+                dadosFiltrados = dadosFiltrados.filter(item => item.atual !== 0);
+            }
+
+            if (mostrarApenasProblemas) {
+                dadosFiltrados = dadosFiltrados.filter(item => 
+                    item.atual < 0 || (item.inicial > 0 && item.produzido === 0 && item.despachado === 0)
+                );
+            }
+
+            atualizarTabela(dadosFiltrados);
+            desenharGrafico(dadosFiltrados);
+        };
+
+        const popularFiltros = (dados) => {
+            const selectProd = document.getElementById('filtroProduto');
+            const valAtual = selectProd.value;
+            const produtosUnicos = [...new Set(dados.map(item => item.produto))].sort();
+            selectProd.innerHTML = '<option value="">Todos os Produtos</option>';
+            produtosUnicos.forEach(p => selectProd.innerHTML += `<option value="${p}">${p}</option>`);
+            selectProd.value = valAtual; 
+        };
+
+        const atualizarTabela = (dados) => {
+            const tbody = document.getElementById('tabelaEstoque');
+            tbody.innerHTML = '';
+            let totalGeral = 0;
+
+            const iconeEdit = `<svg class="w-4 h-4 inline-block ml-1 text-blue-400 opacity-50 hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>`;
+
+            dados.forEach(item => {
+                if (item.inicial === 0 && item.produzido === 0 && item.despachado === 0) return;
+                totalGeral += item.atual;
+                const corSaldo = item.atual < 0 ? 'text-red-600 bg-red-50' : 'text-blue-700 font-black';
+                
+                const ehProblema = item.atual < 0 || (item.inicial > 0 && item.produzido === 0 && item.despachado === 0);
+                const linhaClasse = ehProblema ? 'bg-orange-100 border-l-4 border-orange-500' : '';
+
+                tbody.innerHTML += `
+                    <tr class="border-b hover:bg-blue-50 transition ${linhaClasse} group/row">
+                        <td class="p-3 font-bold text-gray-800">${item.produto}</td>
+                        
+                        <td class="p-3 cursor-pointer group" onclick="editarLote('${item.produto}', '${item.lote}')" title="Clique para renomear este Lote">
+                            <span class="font-mono text-gray-600 group-hover:text-blue-600">${item.lote} ${iconeEdit}</span>
+                        </td>
+                        
+                        <td class="p-3 text-center cursor-pointer group" onclick="editarValor('${item.produto}', '${item.lote}', 'Estoque Inicial', 'inicial', ${item.inicial})" title="Editar Estoque Inicial">
+                            <span class="text-gray-500 group-hover:text-blue-600">${item.inicial} ${iconeEdit}</span>
+                        </td>
+                        
+                        <td class="p-3 text-center cursor-pointer group" onclick="editarValor('${item.produto}', '${item.lote}', 'Produzido', 'produzido', ${item.produzido})" title="Editar Qtd Produzida">
+                            <span class="text-green-600 font-bold group-hover:text-green-800">+ ${item.produzido} ${iconeEdit}</span>
+                        </td>
+                        
+                        <td class="p-3 text-center cursor-pointer group" onclick="editarValor('${item.produto}', '${item.lote}', 'Despachado', 'despachado', ${item.despachado})" title="Editar Qtd Despachada">
+                            <span class="text-red-500 font-bold group-hover:text-red-800">- ${item.despachado} ${iconeEdit}</span>
+                        </td>
+                        
+                        <td class="p-3 text-center text-xl flex items-center justify-between gap-4">
+                            <span class="${corSaldo} flex-1 text-center">${item.atual}</span>
+                            
+                            <!-- Lixeira (Apagar Lote) -->
+                            <button onclick="excluirLoteCompleto('${item.produto}', '${item.lote}')" class="text-red-500 opacity-30 hover:opacity-100 transition hover:bg-red-100 p-1 rounded" title="Apagar Lote do Sistema">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            document.getElementById('totalEstoque').innerText = totalGeral.toLocaleString('pt-BR');
+        };
+
+        const desenharGrafico = (dados) => {
+            const ctx = document.getElementById('meuGrafico').getContext('2d');
+            
+            const saldoPorProduto = {};
+            dados.forEach(item => {
+                if (!saldoPorProduto[item.produto]) saldoPorProduto[item.produto] = 0;
+                saldoPorProduto[item.produto] += item.atual;
+            });
+
+            const labels = Object.keys(saldoPorProduto);
+            const values = Object.values(saldoPorProduto);
+
+            if (meuGrafico) meuGrafico.destroy(); 
+
+            meuGrafico = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Estoque Atual Físico',
+                        data: values,
+                        backgroundColor: 'rgba(59, 130, 246, 0.8)', 
+                        borderColor: 'rgba(29, 78, 216, 1)',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        datalabels: {
+                            anchor: 'end',
+                            align: 'top',
+                            formatter: Math.round,
+                            font: { weight: 'bold', size: 14 },
+                            color: '#1e3a8a' 
+                        },
+                        legend: { display: false }
+                    },
+                    scales: { 
+                        y: { 
+                            beginAtZero: true,
+                            grace: '10%' 
+                        } 
+                    }
+                }
+            });
+        };
+
+        window.onload = () => {
+            iniciarEscutaRealTime(); 
+        };
+
+    </script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen pb-10">
+
+    <nav class="bg-gray-900 text-white p-4 shadow-md border-b-4 border-blue-500">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-black flex items-center gap-2">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                PCP - DASHBOARD INTELIGENTE
+            </h1>
+            
+            <div class="flex items-center gap-2 bg-green-900 text-green-300 border border-green-500 px-4 py-1.5 rounded-full font-bold shadow">
+                <span class="w-3 h-3 bg-green-400 rounded-full animate-pulse"></span>
+                Ao Vivo
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto p-6 mt-4">
+
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-8 border-l-8 border-green-500">
+            <h2 class="text-xl font-bold mb-2 text-gray-800">1. Setup / Inventário Inicial via Excel</h2>
+            <p class="text-sm text-gray-500 mb-4">Colunas obrigatórias: <b>PRODUTO</b>, <b>LOTE</b> e <b>QUANTIDADE</b>.</p>
+            
+            <div class="flex items-center gap-4">
+                <input type="file" id="excelFile" accept=".xlsx, .xls" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer border border-gray-300 rounded-full">
+                <button onclick="importarExcel()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-8 rounded-full shadow transition whitespace-nowrap">Upload de Estoque</button>
+            </div>
+            <p id="statusUpload" class="text-sm text-blue-600 font-bold mt-2"></p>
+        </div>
+
+        <div id="loading" class="text-center text-blue-600 font-black text-2xl my-8 animate-pulse">Sincronizando com a Fábrica...</div>
+
+        <!-- 2. GRÁFICO GERAL -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Visão Geral: Saldo Consolidado por Produto</h2>
+                <div class="bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg text-blue-900 shadow-inner">
+                    Volume Total Fábrica: <span id="totalEstoque" class="font-black text-2xl ml-2">0</span>
+                </div>
+            </div>
+            <div class="relative h-80 w-full">
+                <canvas id="meuGrafico"></canvas>
+            </div>
+        </div>
+
+        <!-- 3. TABELA EDITÁVEL E FILTROS -->
+        <div class="bg-white rounded-lg shadow-lg p-6 border-t-4 border-gray-800">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                <h2 class="text-xl font-bold text-gray-800">Raio-X de Lotes (Clique no dado para corrigir ✎)</h2>
+                
+                <div class="flex flex-wrap gap-4 w-full md:w-auto items-center">
+                    
+                    <label class="flex items-center gap-2 cursor-pointer bg-orange-50 px-3 py-2 border-2 border-orange-300 rounded-lg shadow-sm hover:bg-orange-100 transition font-bold text-orange-700 text-sm">
+                        <input type="checkbox" id="mostrarApenasProblemas" onchange="filtrarTabela()" class="w-5 h-5 text-orange-600 rounded">
+                        ⚠️ Problemas
+                    </label>
+
+                    <label class="flex items-center gap-2 cursor-pointer bg-white px-3 py-2 border-2 border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition font-bold text-gray-700 text-sm">
+                        <input type="checkbox" id="ocultarZerados" onchange="filtrarTabela()" class="w-5 h-5 text-blue-600 rounded">
+                        👁️ Ocultar Zerados
+                    </label>
+
+                    <select id="filtroProduto" onchange="filtrarTabela()" class="p-2 border-2 border-blue-300 rounded-lg focus:ring-blue-500 font-bold bg-blue-50 w-full md:w-64">
+                        <option value="">Todos os Produtos</option>
+                    </select>
+                    
+                    <input type="text" id="filtroLote" onkeyup="filtrarTabela()" placeholder="Buscar Lote Exato..." class="p-2 border-2 border-blue-300 rounded-lg focus:ring-blue-500 font-mono uppercase bg-blue-50 w-full md:w-48 shadow-inner">
+                </div>
+            </div>
+
+            <div class="overflow-x-auto border border-gray-200 rounded-lg shadow-sm">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-800 text-white">
+                        <tr>
+                            <th class="p-3 whitespace-nowrap">Produto</th>
+                            <th class="p-3 whitespace-nowrap">Lote ✎</th>
+                            <th class="p-3 text-center whitespace-nowrap" title="Estoque importado via Excel">Estoque Inicial ✎</th>
+                            <th class="p-3 text-center whitespace-nowrap" title="Entradas das Ordens de Produção">Produzido (Entrou) ✎</th>
+                            <th class="p-3 text-center whitespace-nowrap" title="Saídas confirmadas pela Expedição">Despachado (Saiu) ✎</th>
+                            <th class="p-3 text-center bg-blue-700 whitespace-nowrap">Saldo Atual (Disponível)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabelaEstoque">
+                        <!-- JS carrega aqui ao vivo -->
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">* Clique na lixeira no final da linha para excluir o histórico inteiro daquele Lote.</p>
+        </div>
+
+    </div>
+</body>
+</html>

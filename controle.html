@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PCP - Controle de OPs</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        // IMPORTANTE: Adicionei o setDoc aqui na linha de importação
+        import { getFirestore, collection, setDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Configuração do Firebase atualizada
+        const firebaseConfig = {
+            apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
+            authDomain: "basededados-7ccdd.firebaseapp.com",
+            projectId: "basededados-7ccdd",
+            storageBucket: "basededados-7ccdd.firebasestorage.app",
+            messagingSenderId: "811772325586",
+            appId: "1:811772325586:web:09b658831a49b621fac70b"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const opsCollection = collection(db, "ordens_producao");
+
+        // Base de Produtos
+        const baseProdutos = {
+            "979 - ACUCAR REFINADO 10X1": { fator: 120, validadeAnos: 1, medida: "FD" },
+            "671 - ACUCAR CRISTAL 10X1": { fator: 120, validadeAnos: 2, medida: "FD" },
+            "9009 - ACUCAR EXTRAFINO  10X1": { fator: 120, validadeAnos: 1, medida: "FD" },
+            "9000 - ACUCAR DEMERARA  10X1": { fator: 120, validadeAnos: 2, medida: "FD" },
+            "669 - AÇUCAR CRISTAL 15X2": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "670 - ACUCAR CRISTAL 6X5": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "8489 - ACUCAR CRISTAL YPIRANGA 6X5": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "745 - AÇUCAR CRISTAL MEL DE ENG. 6X5": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "754 - ACUCAR REFINADO 6X5": { fator: 50, validadeAnos: 1, medida: "FD" },
+            "1541 - AÇUCAR CRISTAL 25KG": { fator: 50, validadeAnos: 2, medida: "SC" },
+            "7708 - ACUCAR EXTRAF. MEL DE ENG. 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" },
+            "7697 - ACUCAR CRISTAL MEL DE ENGE. 25KG": { fator: 50, validadeAnos: 2, medida: "SC" },
+            "2517 - ACUCAR EXTRAFINO 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" },
+            "730 - ACUCAR VARREDURA SC 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" }
+        };
+
+        window.carregarProdutos = () => {
+            const selectProduto = document.getElementById('produto');
+            selectProduto.innerHTML = '<option value="">Selecione um Produto...</option>';
+            for (let prod in baseProdutos) {
+                selectProduto.innerHTML += `<option value="${prod}">${prod}</option>`;
+            }
+        };
+
+        window.aoSelecionarProduto = () => {
+            const produtoSelecionado = document.getElementById('produto').value;
+            if (!produtoSelecionado) return;
+
+            const dados = baseProdutos[produtoSelecionado];
+            const hoje = new Date();
+
+            const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+            const dia = String(hoje.getDate()).padStart(2, '0');
+            document.getElementById('lote').value = `${mes}${dia}`;
+
+            document.getElementById('qtdPorPalete').value = dados.fator;
+
+            const dataValidade = new Date();
+            dataValidade.setFullYear(dataValidade.getFullYear() + dados.validadeAnos);
+            document.getElementById('dataValidade').value = dataValidade.toISOString().split('T')[0];
+            
+            document.getElementById('metaTotal').placeholder = `Meta em ${dados.medida}`;
+        };
+
+        window.lancarOP = async (e) => {
+            e.preventDefault(); 
+            
+            const produtoSelecionado = document.getElementById('produto').value;
+            const produtoNome = produtoSelecionado.split(' - ')[1] || produtoSelecionado;
+            const produtoCod = produtoSelecionado.split(' - ')[0] || "";
+            const lote = document.getElementById('lote').value.toUpperCase();
+            const turno = document.getElementById('turno').value;
+            const metaTotal = parseInt(document.getElementById('metaTotal').value);
+            const qtdPorPalete = parseInt(document.getElementById('qtdPorPalete').value);
+            const dataProducao = document.getElementById('dataProducao').value;
+            const dataValidade = document.getElementById('dataValidade').value;
+            const corBotao = document.getElementById('corBotao').value;
+            
+            const medida = baseProdutos[produtoSelecionado] ? baseProdutos[produtoSelecionado].medida : 'UN';
+
+            if (!produtoSelecionado || !lote || !turno || !metaTotal || !qtdPorPalete || !dataProducao || !dataValidade) {
+                alert("Preencha todos os campos da OP!");
+                return;
+            }
+
+            // CRIAÇÃO DO ID CUSTOMIZADO (DD-MM-YYYY - PRODUTO - LOTE - TURNO)
+            const [ano, mes, dia] = dataProducao.split('-');
+            const dataBr = `${dia}-${mes}-${ano}`;
+            const idCustomizado = `${dataBr} - ${produtoNome} - Lote ${lote} - ${turno}`;
+
+            try {
+                // Trocamos o addDoc pelo setDoc e passamos o idCustomizado
+                await setDoc(doc(db, "ordens_producao", idCustomizado), {
+                    codigo: produtoCod,
+                    produto: produtoNome,
+                    lote: lote,
+                    turno: turno,
+                    medida: medida,
+                    metaTotal: metaTotal,
+                    qtdPorPalete: qtdPorPalete,
+                    dataProducao: dataProducao,
+                    dataValidade: dataValidade,
+                    corBotao: corBotao,
+                    status: 'Aberta', 
+                    paletesFeitos: 0,
+                    fardosParciais: 0,
+                    dataLancamento: serverTimestamp()
+                });
+                
+                alert("Ordem de Produção lançada com sucesso!");
+                document.getElementById('formOP').reset(); 
+                document.getElementById('dataProducao').valueAsDate = new Date(); 
+                document.getElementById('metaTotal').placeholder = "Ex: 5000";
+
+            } catch (error) {
+                console.error("Erro ao lançar OP: ", error);
+                alert("Erro ao lançar OP. Verifique o console.");
+            }
+        };
+
+        const q = query(opsCollection, where("status", "==", "Aberta"));
+        onSnapshot(q, (snapshot) => {
+            const tabela = document.getElementById('tabelaOPsAbertas');
+            tabela.innerHTML = '';
+            
+            snapshot.forEach((docSnap) => {
+                const op = docSnap.data();
+                const id = docSnap.id;
+                
+                const totalProduzido = (op.paletesFeitos * op.qtdPorPalete) + op.fardosParciais;
+                const progresso = ((totalProduzido / op.metaTotal) * 100).toFixed(1);
+
+                tabela.innerHTML += `
+                    <tr class="border-b bg-white hover:bg-gray-50">
+                        <td class="p-3 font-mono text-gray-500">${op.codigo}</td>
+                        <td class="p-3 font-bold">${op.produto}</td>
+                        <td class="p-3 font-mono text-blue-700">${op.lote}</td>
+                        <td class="p-3 text-center font-semibold text-gray-700">${op.turno}</td>
+                        <td class="p-3 text-center">${op.metaTotal} ${op.medida}</td>
+                        <td class="p-3 text-center">${op.qtdPorPalete}</td>
+                        <td class="p-3 text-center font-bold text-green-600">${totalProduzido}</td>
+                        <td class="p-3 text-center">${progresso}%</td>
+                        <td class="p-3 text-center">
+                            <button onclick="excluirOP('${id}')" class="text-red-500 hover:text-red-700 font-bold">Cancelar</button>
+                        </td>
+                    </tr>
+                `;
+            });
+        });
+
+        window.excluirOP = async (id) => {
+            if(confirm("Tem certeza que deseja cancelar esta OP? Ela sumirá da tela do operador.")){
+                await deleteDoc(doc(db, "ordens_producao", id));
+            }
+        };
+
+        window.onload = () => {
+            document.getElementById('dataProducao').valueAsDate = new Date();
+            carregarProdutos();
+        };
+
+        document.getElementById('formOP').addEventListener('submit', window.lancarOP);
+        document.getElementById('produto').addEventListener('change', window.aoSelecionarProduto);
+    </script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+
+    <nav class="bg-blue-900 text-white p-4 shadow-md">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">Painel PCP - Controle de OPs</h1>
+            <span class="text-sm bg-blue-800 px-3 py-1 rounded">Módulo Gestão</span>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto p-6 mt-4">
+        
+        <div class="bg-white rounded-lg shadow p-6 mb-8 border-t-4 border-blue-600">
+            <h2 class="text-2xl font-semibold mb-6">Lançar Nova Ordem de Produção</h2>
+            
+            <form id="formOP" class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div class="col-span-1 md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Produto</label>
+                    <select id="produto" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500 bg-gray-50" required></select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Lote</label>
+                    <input type="text" id="lote" class="w-full p-2 border border-gray-300 rounded uppercase focus:ring-blue-500 focus:border-blue-500 font-mono" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Turno</label>
+                    <select id="turno" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
+                        <option value="Turno A">Turno A</option>
+                        <option value="Turno B">Turno B</option>
+                        <option value="Turno C">Turno C</option>
+                        <option value="Turno ADM">Turno ADM</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Meta a Produzir (Total)</label>
+                    <input type="number" id="metaTotal" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Qtd por Palete (Fator)</label>
+                    <input type="number" id="qtdPorPalete" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Data de Produção</label>
+                    <input type="date" id="dataProducao" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Data de Validade</label>
+                    <input type="date" id="dataValidade" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Cor do Botão (Tablet)</label>
+                    <select id="corBotao" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
+                        <option value="bg-blue-500">Azul</option>
+                        <option value="bg-green-500">Verde</option>
+                        <option value="bg-red-500">Vermelho</option>
+                        <option value="bg-yellow-500">Amarelo</option>
+                        <option value="bg-purple-500">Roxo</option>
+                        <option value="bg-orange-500">Laranja</option>
+                    </select>
+                </div>
+
+                <div class="col-span-1 md:col-span-3 flex items-end">
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded shadow transition duration-200">
+                        Lançar Ordem de Produção
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold mb-4 text-gray-800">Ordens de Produção Ativas no Chão de Fábrica</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-200 text-slate-700">
+                            <th class="p-3 rounded-tl">Cód</th>
+                            <th class="p-3">Produto</th>
+                            <th class="p-3">Lote</th>
+                            <th class="p-3 text-center">Turno</th>
+                            <th class="p-3 text-center">Meta Total</th>
+                            <th class="p-3 text-center">Qtd/Palete</th>
+                            <th class="p-3 text-center">Produzido Agora</th>
+                            <th class="p-3 text-center">% Concluído</th>
+                            <th class="p-3 text-center rounded-tr">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabelaOPsAbertas"></tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

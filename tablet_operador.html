@@ -12,9 +12,9 @@
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        // Adicionado o serverTimestamp na importação
+        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Configuração do Firebase atualizada
         const firebaseConfig = {
             apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
             authDomain: "basededados-7ccdd.firebaseapp.com",
@@ -34,7 +34,11 @@
 
             try {
                 const opRef = doc(db, "ordens_producao", id);
-                await updateDoc(opRef, { paletesFeitos: increment(1) });
+                // Inclui a gravação da data/hora exata do Firebase
+                await updateDoc(opRef, { 
+                    paletesFeitos: increment(1),
+                    dataRegistro: serverTimestamp()
+                });
             } catch (error) {
                 console.error("Erro ao registrar palete:", error);
                 alert("Erro de conexão. Tente novamente.");
@@ -53,7 +57,11 @@
 
             try {
                 const opRef = doc(db, "ordens_producao", id);
-                await updateDoc(opRef, { fardosParciais: increment(qtd) });
+                // Inclui a gravação da data/hora exata do Firebase
+                await updateDoc(opRef, { 
+                    fardosParciais: increment(qtd),
+                    dataRegistro: serverTimestamp()
+                });
             } catch (error) {
                 console.error("Erro ao registrar parcial:", error);
                 alert("Erro de conexão. Tente novamente.");
@@ -64,7 +72,11 @@
             if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela.`)) {
                 try {
                     const opRef = doc(db, "ordens_producao", id);
-                    await updateDoc(opRef, { status: 'Finalizada' });
+                    // Inclui a gravação da data/hora exata do Firebase ao finalizar
+                    await updateDoc(opRef, { 
+                        status: 'Finalizada',
+                        dataRegistro: serverTimestamp()
+                    });
                 } catch (error) {
                     console.error("Erro ao finalizar OP:", error);
                     alert("Erro de conexão. Tente novamente.");

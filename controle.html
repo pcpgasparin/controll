@@ -7,7 +7,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        // IMPORTANTE: Adicionei o setDoc aqui na linha de importação
         import { getFirestore, collection, setDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // Configuração do Firebase atualizada
@@ -91,13 +90,14 @@
                 return;
             }
 
-            // CRIAÇÃO DO ID CUSTOMIZADO (DD-MM-YYYY - PRODUTO - LOTE - TURNO)
+            // CRIAÇÃO DO ID CUSTOMIZADO ÚNICO
+            // Adicionado getTime() para garantir que OPs iguais não se sobrescrevam
             const [ano, mes, dia] = dataProducao.split('-');
             const dataBr = `${dia}-${mes}-${ano}`;
-            const idCustomizado = `${dataBr} - ${produtoNome} - Lote ${lote} - ${turno}`;
+            const carimboTempo = new Date().getTime(); 
+            const idCustomizado = `${dataBr} - ${produtoNome} - Lote ${lote} - ${turno} - ${carimboTempo}`;
 
             try {
-                // Trocamos o addDoc pelo setDoc e passamos o idCustomizado
                 await setDoc(doc(db, "ordens_producao", idCustomizado), {
                     codigo: produtoCod,
                     produto: produtoNome,
@@ -235,6 +235,12 @@
                         <option value="bg-yellow-500">Amarelo</option>
                         <option value="bg-purple-500">Roxo</option>
                         <option value="bg-orange-500">Laranja</option>
+                        <!-- Novas cores adicionadas abaixo -->
+                        <option value="bg-pink-500">Rosa</option>
+                        <option value="bg-indigo-500">Índigo</option>
+                        <option value="bg-cyan-500">Ciano</option>
+                        <option value="bg-teal-500">Teal (Verde Azulado)</option>
+                        <option value="bg-lime-500">Verde Limão</option>
                     </select>
                 </div>
 

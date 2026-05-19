@@ -6,10 +6,8 @@
     <title>PCP - Dashboard de Estoque Real-Time</title>
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Bibliotecas para ler Excel e gerar Gráficos -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Plugin para mostrar o número no topo da barra do gráfico -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
 
     <script type="module">
@@ -39,12 +37,50 @@
             correcoes: []
         };
 
+        // Base Homologada de Produtos do PCP
+        const baseProdutos = {
+            "979 - ACUCAR REFINADO 10X1": { fator: 120, validadeAnos: 1, medida: "FD" },
+            "671 - ACUCAR CRISTAL 10X1": { fator: 120, validadeAnos: 2, medida: "FD" },
+            "9009 - ACUCAR EXTRAFINO  10X1": { fator: 120, validadeAnos: 1, medida: "FD" },
+            "9000 - ACUCAR DEMERARA  10X1": { fator: 120, validadeAnos: 2, medida: "FD" },
+            "669 - AÇUCAR CRISTAL 15X2": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "670 - ACUCAR CRISTAL 6X5": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "8489 - ACUCAR CRISTAL YPIRANGA 6X5": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "745 - AÇUCAR CRISTAL MEL DE ENG. 6X5": { fator: 40, validadeAnos: 2, medida: "FD" },
+            "754 - ACUCAR REFINADO 6X5": { fator: 50, validadeAnos: 1, medida: "FD" },
+            "1541 - AÇUCAR CRISTAL 25KG": { fator: 50, validadeAnos: 2, medida: "SC" },
+            "7708 - ACUCAR EXTRAF. MEL DE ENG. 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" },
+            "7697 - ACUCAR CRISTAL MEL DE ENGE. 25KG": { fator: 50, validadeAnos: 2, medida: "SC" },
+            "2517 - ACUCAR EXTRAFINO 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" },
+            "730 - ACUCAR VARREDURA SC 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" },
+            "1688 - ARROZ BRANCO GASPARIN TIPO 1 6X5": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "1690 - ARROZ PARBOILIZADO GASPARIN TIPO 1 6X5": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "1691 - ARROZ PARBOILIZADO GASPARIN TIPO 1 15X2": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "3114 - ARROZ PARBOILIZADO GASPARIN TIPO 1 30X1": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "3123 - ARROZ PARBOILIZADO GASPARIN TIPO 1 10X1": { fator: 45, validadeAnos: 1, medida: "FD" },
+            "3235 - ARROZ BRANCO GASPARIN TIPO 1 30X1": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "3240 - ARROZ BRANCO GASPARIN TIPO 1 10X1": { fator: 45, validadeAnos: 1, medida: "FD" },
+            "4852 - ARROZ INTEGRAL GASPARIN TIPO 1 10X1": { fator: 45, validadeAnos: 1, medida: "FD" },
+            "8487 - ARROZ BRANCO YPIRANGA TIPO 1 6X5": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "8488 - ARROZ PARBOILIZADO YPIRANGA TIPO 1 6X5": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "9315 - ARROZ BRANCO NONA VALENTINA TIPO 2 6X5": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "1888 - FEIJAO PRETO GASPARIN TIPO 1 30X1": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "7771 - FEIJAO PRETO NONA VALENTINA TIPO 1 30X1": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "8486 - FEIJAO PRETO YPIRANGA TIPO 1 30X1": { fator: 40, validadeAnos: 1, medida: "FD" },
+            "8513 - FEIJAO PRETO GASPARIN TIPO 1 25KG": { fator: 40, validadeAnos: 1, medida: "SC" },
+            "210 - AÇUCAR CRISTAL 50 KG": { fator: 30, validadeAnos: 2, medida: "SC" },
+            "3112 - AÇUCAR MASCAVO GASPARIN 10X1": { fator: 100, validadeAnos: 1, medida: "FD" },
+            "3113 - AÇUCAR MASCAVO GASPARIN 20X500": { fator: 100, validadeAnos: 1, medida: "FD" },
+            "8058 - AÇUCAR MASCAVO MEL DO ENGENHO 10x1": { fator: 100, validadeAnos: 1, medida: "FD" },
+            "8059 - AÇUCAR MASCAVO MEL DO ENGENHO 20x500": { fator: 100, validadeAnos: 1, medida: "FD" }
+        };
+
         Chart.register(ChartDataLabels);
 
         // FUNÇÃO DE FAXINA: Remove espaços duplos e garante padrão absoluto
         const norm = (txt) => String(txt || '').replace(/\s+/g, ' ').trim().toUpperCase();
 
-        // FUNÇÃO PARA EXTRAIR DATA DO FIREBASE (Lida com diferentes nomes de campos de data)
+        // FUNÇÃO PARA EXTRAIR DATA DO FIREBASE
         const extrairData = (docData) => {
             const camposData = ['dataImportacao', 'dataCorrecao', 'dataRegistro', 'dataCriacao', 'timestamp', 'data'];
             for (let campo of camposData) {
@@ -56,8 +92,17 @@
             return null;
         };
 
+        // Carrega os produtos no select do formulário manual
+        window.carregarProdutosManuais = () => {
+            const selectManual = document.getElementById('manualProduto');
+            selectManual.innerHTML = '<option value="">Selecione um Produto...</option>';
+            for (let prod in baseProdutos) {
+                selectManual.innerHTML += `<option value="${prod}">${prod}</option>`;
+            }
+        };
+
         // ==========================================
-        // 1. IMPORTAR EXCEL (ESTOQUE INICIAL) COM SOMA INTELIGENTE
+        // 1. IMPORTAR EXCEL (ESTOQUE INICIAL)
         // ==========================================
         window.importarExcel = async () => {
             const fileInput = document.getElementById('excelFile');
@@ -80,7 +125,6 @@
                 document.getElementById('statusUpload').innerText = "Processando e enviando para o banco...";
 
                 try {
-                    // PASSO 1: Agrupar e somar linhas duplicadas do Excel na memória
                     const mapaEstoqueConsolidado = {};
 
                     for (let linha of planilha) {
@@ -93,7 +137,6 @@
 
                         if(isNaN(qtd)) continue; 
 
-                        // Cria uma chave única combinando Produto e Lote
                         const chaveUnica = `${prodStr}_${loteStr}`;
                         
                         if (!mapaEstoqueConsolidado[chaveUnica]) {
@@ -104,11 +147,9 @@
                             };
                         }
                         
-                        // Soma a quantidade se houver várias linhas iguais
                         mapaEstoqueConsolidado[chaveUnica].quantidade += qtd;
                     }
 
-                    // PASSO 2: Enviar os dados já somados para o Firebase
                     const chaves = Object.keys(mapaEstoqueConsolidado);
                     
                     for (let chave of chaves) {
@@ -136,23 +177,89 @@
         };
 
         // ==========================================
+        // MOVIMENTAÇÃO MANUAL AVULSA (ENTRADA E SAÍDA)
+        // ==========================================
+        window.lancarMovimentacaoManual = async (e) => {
+            e.preventDefault();
+            
+            const tipo = document.getElementById('manualTipo').value;
+            const produtoSelecionado = document.getElementById('manualProduto').value;
+            const lote = norm(document.getElementById('manualLote').value);
+            const qtd = parseInt(document.getElementById('manualQtd').value);
+
+            if (!produtoSelecionado || !lote || isNaN(qtd) || qtd <= 0) {
+                alert("Preencha todos os campos corretamente. A quantidade deve ser maior que zero.");
+                return;
+            }
+
+            document.getElementById('loading').classList.remove('hidden');
+
+            try {
+                const carimboTempo = new Date().getTime();
+                const produtoNorm = norm(produtoSelecionado);
+                
+                if (tipo === "ENTRADA") {
+                    const idDoc = `MANUAL-ENTRADA-${produtoNorm}-${lote}-${carimboTempo}`.replace(/\s+/g, '-').toUpperCase();
+                    await setDoc(doc(db, "estoque_inicial", idDoc), {
+                        produto: produtoNorm,
+                        lote: lote,
+                        quantidade: qtd,
+                        dataImportacao: serverTimestamp(),
+                        origem: 'lancamento_avulso'
+                    });
+                    alert("Estoque avulso ADICIONADO com sucesso!");
+                } else if (tipo === "SAIDA") {
+                    const idDoc = `MANUAL-SAIDA-${produtoNorm}-${lote}-${carimboTempo}`.replace(/\s+/g, '-').toUpperCase();
+                    await setDoc(doc(db, "cargas_expedicao", idDoc), {
+                        status: 'Despachada',
+                        tipo: 'retirada_avulsa',
+                        dataRegistro: serverTimestamp(),
+                        itens: [{
+                            produto: produtoNorm,
+                            lote: lote,
+                            quantidade: qtd
+                        }]
+                    });
+                    alert("Estoque avulso RETIRADO com sucesso!");
+                }
+
+                document.getElementById('formEstoqueManual').reset();
+            } catch (error) {
+                console.error("Erro ao lançar movimentação manual:", error);
+                alert("Erro ao processar a movimentação no banco de dados.");
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+            }
+        };
+
+        // ==========================================
         // 2. MOTOR DE CÁLCULO AO VIVO
         // ==========================================
         const calcularSaldos = () => {
             const saldos = {}; 
+            const renomeacoesProduto = {};
             const renomeacoesLote = {};
             const ajustesValores = [];
 
+            // MAPEIA AS MUDANÇAS GLOBAIS DE PRODUTO
             dadosAoVivo.correcoes.forEach(c => {
-                const p = norm(c.produto);
-                if (c.tipo === 'renomear_lote') {
-                    renomeacoesLote[`${p}_${norm(c.loteAntigo)}`] = norm(c.loteNovo);
-                } else if (c.tipo === 'ajuste_valor') {
-                    ajustesValores.push({...c, produto: p, lote: norm(c.lote)});
+                if (c.tipo === 'renomear_produto') {
+                    renomeacoesProduto[norm(c.produtoAntigo)] = norm(c.produtoNovo);
                 }
             });
+            const getProdutoEfetivo = (prod) => renomeacoesProduto[prod] || prod;
 
-            const getLoteEfetivo = (prod, lote) => renomeacoesLote[`${prod}_${lote}`] || lote;
+            // MAPEIA AS MUDANÇAS DE LOTE E AJUSTES DE VALOR
+            dadosAoVivo.correcoes.forEach(c => {
+                if (c.tipo === 'renomear_lote') {
+                    const pEfetivo = getProdutoEfetivo(norm(c.produto));
+                    renomeacoesLote[`${pEfetivo}_${norm(c.loteAntigo)}`] = norm(c.loteNovo);
+                } else if (c.tipo === 'ajuste_valor') {
+                    const pEfetivo = getProdutoEfetivo(norm(c.produto));
+                    ajustesValores.push({...c, produto: pEfetivo, lote: norm(c.lote)});
+                }
+            });
+            const getLoteEfetivo = (prodEfetivo, lote) => renomeacoesLote[`${prodEfetivo}_${lote}`] || lote;
 
             const iniciarSeNaoExistir = (chave, prod, loteEfetivo) => {
                 if (!saldos[chave]) saldos[chave] = { 
@@ -175,12 +282,12 @@
                 }
             };
 
+            // APLICA CÁLCULOS
             dadosAoVivo.iniciais.forEach(d => {
-                const p = norm(d.produto);
-                const l = norm(d.lote);
-                const loteEfetivo = getLoteEfetivo(p, l);
-                const chave = `${p}_${loteEfetivo}`;
-                iniciarSeNaoExistir(chave, p, loteEfetivo);
+                const p = getProdutoEfetivo(norm(d.produto));
+                const l = getLoteEfetivo(p, norm(d.lote));
+                const chave = `${p}_${l}`;
+                iniciarSeNaoExistir(chave, p, l);
                 saldos[chave].inicial += d.quantidade;
                 atualizarDataLote(chave, d);
             });
@@ -188,32 +295,33 @@
             dadosAoVivo.producao.forEach(d => {
                 const qtdFeita = (d.paletesFeitos * d.qtdPorPalete) + d.fardosParciais;
                 if (qtdFeita > 0) {
-                    const p = norm(d.produto);
-                    const l = norm(d.lote);
-                    const loteEfetivo = getLoteEfetivo(p, l);
-                    const chave = `${p}_${loteEfetivo}`;
-                    iniciarSeNaoExistir(chave, p, loteEfetivo);
+                    const p = getProdutoEfetivo(norm(d.produto));
+                    const l = getLoteEfetivo(p, norm(d.lote));
+                    const chave = `${p}_${l}`;
+                    iniciarSeNaoExistir(chave, p, l);
                     saldos[chave].produzido += qtdFeita;
                     atualizarDataLote(chave, d);
                 }
             });
 
             dadosAoVivo.expedicao.forEach(carga => {
-                carga.itens.forEach(item => {
-                    const p = norm(item.produto);
-                    const l = norm(item.lote);
-                    const loteEfetivo = getLoteEfetivo(p, l);
-                    const chave = `${p}_${loteEfetivo}`;
-                    iniciarSeNaoExistir(chave, p, loteEfetivo);
-                    saldos[chave].despachado += item.quantidade;
-                    atualizarDataLote(chave, carga); 
-                });
+                if(carga.itens) {
+                    carga.itens.forEach(item => {
+                        const p = getProdutoEfetivo(norm(item.produto));
+                        const l = getLoteEfetivo(p, norm(item.lote));
+                        const chave = `${p}_${l}`;
+                        iniciarSeNaoExistir(chave, p, l);
+                        saldos[chave].despachado += item.quantidade;
+                        atualizarDataLote(chave, carga); 
+                    });
+                }
             });
 
             ajustesValores.forEach(ajuste => {
-                const loteEfetivo = getLoteEfetivo(ajuste.produto, ajuste.lote);
-                const chave = `${ajuste.produto}_${loteEfetivo}`;
-                iniciarSeNaoExistir(chave, ajuste.produto, loteEfetivo);
+                const p = ajuste.produto; 
+                const l = getLoteEfetivo(p, ajuste.lote);
+                const chave = `${p}_${l}`;
+                iniciarSeNaoExistir(chave, p, l);
                 saldos[chave][ajuste.campo] += ajuste.delta;
                 atualizarDataLote(chave, ajuste);
             });
@@ -223,7 +331,6 @@
                 return item;
             });
 
-            // Ordenar por última data (mais recentes primeiro)
             listaSaldos.sort((a, b) => {
                 if (!a.ultimaData) return 1;
                 if (!b.ultimaData) return -1;
@@ -267,6 +374,25 @@
         // ==========================================
         // 4. EDIÇÃO E EXCLUSÃO CIRÚRGICA
         // ==========================================
+        window.editarProduto = async (produtoAntigo) => {
+            const novoProduto = prompt(`🛠 CORREÇÃO GLOBAL DE PRODUTO:\nProduto Atual: ${produtoAntigo}\n\nATENÇÃO: O novo nome será aplicado a TODOS os lotes deste produto.\nDigite o NOVO nome do Produto:`, produtoAntigo);
+            
+            if (!novoProduto || novoProduto.trim() === "" || norm(novoProduto) === norm(produtoAntigo)) return;
+
+            if (confirm(`Confirmar a alteração de "${produtoAntigo}" para "${norm(novoProduto)}" em todo o sistema?`)) {
+                try {
+                    await addDoc(collection(db, "correcoes_estoque"), {
+                        tipo: 'renomear_produto',
+                        produtoAntigo: norm(produtoAntigo),
+                        produtoNovo: norm(novoProduto),
+                        dataCorrecao: serverTimestamp()
+                    });
+                } catch(e) {
+                    alert("Erro ao renomear produto.");
+                }
+            }
+        };
+
         window.editarValor = async (produto, lote, campoVisual, campoDB, valorAtual) => {
             const novoValorStr = prompt(`🛠 CORREÇÃO DE SALDO:\nProduto: ${produto} | Lote: ${lote}\nCampo: ${campoVisual}\n\nValor Atual no sistema: ${valorAtual}\nDigite o NOVO valor correto:`, valorAtual);
             
@@ -295,17 +421,17 @@
         };
 
         window.editarLote = async (produto, loteAntigo) => {
-            const novoLote = prompt(`🛠 CORREÇÃO DE NOME DO LOTE:\nProduto: ${produto}\nLote Atual: ${loteAntigo}\n\nDigite o NOVO Lote para unificar o histórico:`, loteAntigo);
+            const lotePrompt = prompt(`🛠 CORREÇÃO DE NOME DO LOTE:\nProduto: ${produto}\nLote Atual: ${loteAntigo}\n\nDigite o NOVO Lote para unificar o histórico:`, loteAntigo);
             
-            if (!novoLote || novoLote.trim() === "" || norm(novoLote) === norm(loteAntigo)) return;
+            if (!lotePrompt || lotePrompt.trim() === "" || norm(lotePrompt) === norm(loteAntigo)) return;
 
-            if (confirm(`Atenção: Todo o saldo do lote ${loteAntigo} será movido para o lote ${norm(novoLote)}. Confirmar?`)) {
+            if (confirm(`Atenção: Todo o saldo do lote ${loteAntigo} será movido para o lote ${norm(lotePrompt)}. Confirmar?`)) {
                 try {
                     await addDoc(collection(db, "correcoes_estoque"), {
                         tipo: 'renomear_lote',
                         produto: norm(produto),
                         loteAntigo: norm(loteAntigo),
-                        loteNovo: norm(novoLote),
+                        loteNovo: norm(lotePrompt),
                         dataCorrecao: serverTimestamp()
                     });
                 } catch(e) {
@@ -326,29 +452,38 @@
                 document.getElementById('loading').classList.remove('hidden');
 
                 const correcoesSnap = await getDocs(collection(db, "correcoes_estoque"));
+                
+                const renomeacoesProduto = {};
+                correcoesSnap.forEach(d => {
+                    const c = d.data();
+                    if (c.tipo === 'renomear_produto') renomeacoesProduto[norm(c.produtoAntigo)] = norm(c.produtoNovo);
+                });
+                const getProdutoEfetivo = (prod) => renomeacoesProduto[prod] || prod;
+
                 const renomeacoesLote = {};
                 correcoesSnap.forEach(d => {
                     const c = d.data();
                     if (c.tipo === 'renomear_lote') {
-                        renomeacoesLote[`${norm(c.produto)}_${norm(c.loteAntigo)}`] = norm(c.loteNovo);
+                        const pEfetivo = getProdutoEfetivo(norm(c.produto));
+                        renomeacoesLote[`${pEfetivo}_${norm(c.loteAntigo)}`] = norm(c.loteNovo);
                     }
                 });
-                const getLoteEfetivo = (prod, loteOrig) => renomeacoesLote[`${prod}_${loteOrig}`] || loteOrig;
+                const getLoteEfetivo = (pEfetivo, loteOrig) => renomeacoesLote[`${pEfetivo}_${loteOrig}`] || loteOrig;
 
                 const snapInit = await getDocs(collection(db, "estoque_inicial"));
                 for (let d of snapInit.docs) {
-                    const docP = norm(d.data().produto);
-                    const docL = norm(d.data().lote);
-                    if (docP === p && getLoteEfetivo(docP, docL) === l) {
+                    const pEfetivo = getProdutoEfetivo(norm(d.data().produto));
+                    const lEfetivo = getLoteEfetivo(pEfetivo, norm(d.data().lote));
+                    if (pEfetivo === p && lEfetivo === l) {
                         await deleteDoc(doc(db, "estoque_inicial", d.id));
                     }
                 }
 
                 const snapOps = await getDocs(collection(db, "ordens_producao"));
                 for (let d of snapOps.docs) {
-                    const docP = norm(d.data().produto);
-                    const docL = norm(d.data().lote);
-                    if (docP === p && getLoteEfetivo(docP, docL) === l) {
+                    const pEfetivo = getProdutoEfetivo(norm(d.data().produto));
+                    const lEfetivo = getLoteEfetivo(pEfetivo, norm(d.data().lote));
+                    if (pEfetivo === p && lEfetivo === l) {
                         await deleteDoc(doc(db, "ordens_producao", d.id));
                     }
                 }
@@ -359,9 +494,9 @@
                     if (carga.itens && carga.itens.length > 0) {
                         let temAlteracao = false;
                         let novosItens = carga.itens.filter(item => {
-                            const itemP = norm(item.produto);
-                            const itemL = norm(item.lote);
-                            if (itemP === p && getLoteEfetivo(itemP, itemL) === l) {
+                            const pEfetivo = getProdutoEfetivo(norm(item.produto));
+                            const lEfetivo = getLoteEfetivo(pEfetivo, norm(item.lote));
+                            if (pEfetivo === p && lEfetivo === l) {
                                 temAlteracao = true;
                                 return false; 
                             }
@@ -376,9 +511,13 @@
 
                 for (let d of correcoesSnap.docs) {
                     const c = d.data();
-                    const docP = norm(c.produto);
-                    const ehAjusteDesseLote = c.tipo === 'ajuste_valor' && docP === p && getLoteEfetivo(docP, norm(c.lote)) === l;
-                    const ehRenomeacaoDesseLote = c.tipo === 'renomear_lote' && docP === p && (norm(c.loteNovo) === l || norm(c.loteAntigo) === l);
+                    if (c.tipo === 'renomear_produto') continue; 
+
+                    const pEfetivo = getProdutoEfetivo(norm(c.produto));
+                    const lEfetivo = getLoteEfetivo(pEfetivo, norm(c.lote));
+                    
+                    const ehAjusteDesseLote = c.tipo === 'ajuste_valor' && pEfetivo === p && lEfetivo === l;
+                    const ehRenomeacaoDesseLote = c.tipo === 'renomear_lote' && pEfetivo === p && (norm(c.loteNovo) === l || norm(c.loteAntigo) === l);
                     
                     if (ehAjusteDesseLote || ehRenomeacaoDesseLote) {
                         await deleteDoc(doc(db, "correcoes_estoque", d.id));
@@ -444,7 +583,6 @@
                 const ehProblema = item.atual < 0 || (item.inicial > 0 && item.produzido === 0 && item.despachado === 0);
                 const linhaClasse = ehProblema ? 'bg-orange-100 border-l-4 border-orange-500' : '';
 
-                // Formatar a data para exibição
                 let strData = '-';
                 if (item.ultimaData) {
                     strData = item.ultimaData.toLocaleDateString('pt-BR') + ' às ' + item.ultimaData.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -452,7 +590,9 @@
 
                 tbody.innerHTML += `
                     <tr class="border-b hover:bg-blue-50 transition ${linhaClasse} group/row">
-                        <td class="p-3 font-bold text-gray-800">${item.produto}</td>
+                        <td class="p-3 font-bold text-gray-800 cursor-pointer group" onclick="editarProduto('${item.produto}')" title="Clique para corrigir o nome do Produto">
+                            <span class="group-hover:text-blue-600">${item.produto} ${iconeEdit}</span>
+                        </td>
                         
                         <td class="p-3 cursor-pointer group" onclick="editarLote('${item.produto}', '${item.lote}')" title="Clique para renomear este Lote">
                             <span class="font-mono text-gray-600 group-hover:text-blue-600">${item.lote} ${iconeEdit}</span>
@@ -475,7 +615,6 @@
                         <td class="p-3 text-center text-xl flex items-center justify-between gap-4">
                             <span class="${corSaldo} flex-1 text-center">${item.atual}</span>
                             
-                            <!-- Lixeira (Apagar Lote) -->
                             <button onclick="excluirLoteCompleto('${item.produto}', '${item.lote}')" class="text-red-500 opacity-30 hover:opacity-100 transition hover:bg-red-100 p-1 rounded" title="Apagar Lote do Sistema">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
@@ -521,7 +660,7 @@
                             anchor: 'end',
                             align: 'top',
                             formatter: Math.round,
-                            font: { weight: 'bold', size: 14 },
+                            font: { weight: 'bold', size: 11 },
                             color: '#1e3a8a' 
                         },
                         legend: { display: false }
@@ -530,13 +669,20 @@
                         y: { 
                             beginAtZero: true,
                             grace: '10%' 
-                        } 
+                        },
+                        x: {
+                            ticks: {
+                                font: { size: 10 }
+                            }
+                        }
                     }
                 }
             });
         };
 
         window.onload = () => {
+            document.getElementById('formEstoqueManual').addEventListener('submit', window.lancarMovimentacaoManual);
+            carregarProdutosManuais(); // Preenche a lista suspensa manual
             iniciarEscutaRealTime(); 
         };
 
@@ -560,20 +706,53 @@
 
     <div class="max-w-7xl mx-auto p-6 mt-4">
 
-        <div class="bg-white rounded-lg shadow-lg p-6 mb-8 border-l-8 border-green-500">
-            <h2 class="text-xl font-bold mb-2 text-gray-800">1. Setup / Inventário Inicial via Excel</h2>
-            <p class="text-sm text-gray-500 mb-4">Colunas obrigatórias: <b>PRODUTO</b>, <b>LOTE</b> e <b>QUANTIDADE</b>.</p>
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
             
-            <div class="flex items-center gap-4">
-                <input type="file" id="excelFile" accept=".xlsx, .xls" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer border border-gray-300 rounded-full">
-                <button onclick="importarExcel()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-8 rounded-full shadow transition whitespace-nowrap">Upload de Estoque</button>
+            <div class="bg-white rounded-lg shadow-lg p-6 border-l-8 border-green-500 flex flex-col justify-center lg:col-span-4">
+                <h2 class="text-xl font-bold mb-2 text-gray-800">Carga em Massa (Excel)</h2>
+                <p class="text-sm text-gray-500 mb-4">Colunas obrigatórias: <b>PRODUTO</b>, <b>LOTE</b> e <b>QUANTIDADE</b>.</p>
+                
+                <div class="flex flex-col gap-4">
+                    <input type="file" id="excelFile" accept=".xlsx, .xls" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100 cursor-pointer border border-gray-300 rounded-full">
+                    <button onclick="importarExcel()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-full shadow transition w-full whitespace-nowrap">Fazer Upload</button>
+                </div>
+                <p id="statusUpload" class="text-sm text-blue-600 font-bold mt-2"></p>
             </div>
-            <p id="statusUpload" class="text-sm text-blue-600 font-bold mt-2"></p>
+
+            <div class="bg-white rounded-lg shadow-lg p-6 border-l-8 border-blue-500 lg:col-span-8">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Movimentação Avulsa (Manual)</h2>
+                <form id="formEstoqueManual" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Operação</label>
+                        <select id="manualTipo" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 bg-white font-bold text-gray-700">
+                            <option value="ENTRADA" class="text-green-600 font-bold">Adicionar (+)</option>
+                            <option value="SAIDA" class="text-red-600 font-bold">Retirar (-)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Produto</label>
+                        <select id="manualProduto" required class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 bg-gray-50 text-sm font-semibold text-gray-800"></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Lote</label>
+                        <input type="text" id="manualLote" required placeholder="Ex: A1" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 uppercase font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold text-gray-700 mb-1">Quantidade</label>
+                        <input type="number" id="manualQtd" required min="1" placeholder="Ex: 120" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500">
+                    </div>
+                    <div class="sm:col-span-2 lg:col-span-4 flex items-end mt-2">
+                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded shadow transition">
+                            Confirmar Movimentação
+                        </button>
+                    </div>
+                </form>
+            </div>
+
         </div>
 
         <div id="loading" class="text-center text-blue-600 font-black text-2xl my-8 animate-pulse">Sincronizando com a Fábrica...</div>
 
-        <!-- 2. GRÁFICO GERAL -->
         <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
             <div class="flex justify-between items-center mb-4">
                 <h2 class="text-xl font-bold text-gray-800">Visão Geral: Saldo Consolidado por Produto</h2>
@@ -581,12 +760,11 @@
                     Volume Total Fábrica: <span id="totalEstoque" class="font-black text-2xl ml-2">0</span>
                 </div>
             </div>
-            <div class="relative h-80 w-full">
+            <div class="relative h-96 w-full">
                 <canvas id="meuGrafico"></canvas>
             </div>
         </div>
 
-        <!-- 3. TABELA EDITÁVEL E FILTROS -->
         <div class="bg-white rounded-lg shadow-lg p-6 border-t-4 border-gray-800">
             <div class="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                 <h2 class="text-xl font-bold text-gray-800">Raio-X de Lotes (Clique no dado para corrigir ✎)</h2>
@@ -615,18 +793,17 @@
                 <table class="w-full text-left border-collapse">
                     <thead class="bg-gray-800 text-white">
                         <tr>
-                            <th class="p-3 whitespace-nowrap">Produto</th>
+                            <th class="p-3 whitespace-nowrap">Produto ✎</th>
                             <th class="p-3 whitespace-nowrap">Lote ✎</th>
                             <th class="p-3 whitespace-nowrap" title="Data do último registro (importação, produção ou expedição)">Últ. Movimentação</th>
-                            <th class="p-3 text-center whitespace-nowrap" title="Estoque importado via Excel">Estoque Inicial ✎</th>
+                            <th class="p-3 text-center whitespace-nowrap" title="Estoque importado via Excel ou Entrada Avulsa">Estoque Inicial ✎</th>
                             <th class="p-3 text-center whitespace-nowrap" title="Entradas das Ordens de Produção">Produzido (Entrou) ✎</th>
-                            <th class="p-3 text-center whitespace-nowrap" title="Saídas confirmadas pela Expedição">Despachado (Saiu) ✎</th>
+                            <th class="p-3 text-center whitespace-nowrap" title="Saídas de Expedição ou Retiradas Avulsas">Despachado (Saiu) ✎</th>
                             <th class="p-3 text-center bg-blue-700 whitespace-nowrap">Saldo Atual (Disponível)</th>
                         </tr>
                     </thead>
                     <tbody id="tabelaEstoque">
-                        <!-- JS carrega aqui ao vivo -->
-                    </tbody>
+                        </tbody>
                 </table>
             </div>
             <p class="text-xs text-gray-400 mt-2">* Clique na lixeira no final da linha para excluir o histórico inteiro daquele Lote.</p>

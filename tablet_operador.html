@@ -12,7 +12,6 @@
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        // Adicionado o serverTimestamp na importação
         import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -34,7 +33,6 @@
 
             try {
                 const opRef = doc(db, "ordens_producao", id);
-                // Inclui a gravação da data/hora exata do Firebase
                 await updateDoc(opRef, { 
                     paletesFeitos: increment(1),
                     dataRegistro: serverTimestamp()
@@ -57,7 +55,6 @@
 
             try {
                 const opRef = doc(db, "ordens_producao", id);
-                // Inclui a gravação da data/hora exata do Firebase
                 await updateDoc(opRef, { 
                     fardosParciais: increment(qtd),
                     dataRegistro: serverTimestamp()
@@ -68,11 +65,43 @@
             }
         };
 
+        // NOVA FUNÇÃO: Alterar a quantidade do palete no meio da OP
+        window.alterarQtdPalete = async (id, qtdAtual, medida, paletesFeitos, fardosParciais) => {
+            let novaQtdStr = prompt(`Quantidade atual: ${qtdAtual} ${medida} por palete.\nDigite a NOVA quantidade padrão para este palete:`, qtdAtual);
+            if (novaQtdStr === null || novaQtdStr.trim() === "") return;
+            
+            let novaQtd = parseInt(novaQtdStr);
+            if (isNaN(novaQtd) || novaQtd <= 0) {
+                alert("Quantidade inválida! Digite um número maior que zero.");
+                return;
+            }
+
+            if (novaQtd === qtdAtual) return;
+
+            if (confirm(`Atenção: Os próximos cliques vão valer ${novaQtd} ${medida}.\nConfirmar alteração?`)) {
+                try {
+                    // Proteção de cálculo: Consolida tudo o que foi feito antes da mudança em fardos parciais
+                    // Para evitar que a mudança de fator distorça o cálculo do que JÁ FOI produzido no passado
+                    const totalConsolidadoAteAgora = (paletesFeitos * qtdAtual) + fardosParciais;
+
+                    const opRef = doc(db, "ordens_producao", id);
+                    await updateDoc(opRef, { 
+                        qtdPorPalete: novaQtd,
+                        paletesFeitos: 0, // Zera os paletes cheios
+                        fardosParciais: totalConsolidadoAteAgora, // Salva todo o histórico aqui
+                        dataRegistro: serverTimestamp()
+                    });
+                } catch (error) {
+                    console.error("Erro ao alterar qtd do palete:", error);
+                    alert("Erro de conexão. Tente novamente.");
+                }
+            }
+        };
+
         window.finalizarOP = async (id, produto) => {
             if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela.`)) {
                 try {
                     const opRef = doc(db, "ordens_producao", id);
-                    // Inclui a gravação da data/hora exata do Firebase ao finalizar
                     await updateDoc(opRef, { 
                         status: 'Finalizada',
                         dataRegistro: serverTimestamp()
@@ -127,16 +156,23 @@
                         <div class="bg-gray-100 rounded-lg p-3 text-center mb-4 border border-gray-200">
                             <p class="text-lg text-gray-600 font-semibold uppercase">Total Produzido Agora</p>
                             <p class="text-4xl font-black text-green-600">${totalProduzido} <span class="text-2xl text-gray-500">${op.medida}</span></p>
-                            <p class="text-md text-gray-500 mt-1">(${op.paletesFeitos} Paletes fechados + ${op.fardosParciais} avulsos)</p>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-4 mt-auto">
-                            <button onclick="registrarParcial('${id}', '${op.medida}')" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold text-lg py-4 px-2 rounded-lg shadow btn-press flex items-center justify-center gap-2">
+                        <div class="grid grid-cols-2 gap-3 mt-auto">
+                            <!-- Botões menores lado a lado -->
+                            <button onclick="registrarParcial('${id}', '${op.medida}')" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold text-sm py-3 px-2 rounded-lg shadow btn-press flex flex-col items-center justify-center gap-1">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                 Palete Incompleto
                             </button>
                             
-                            <button onclick="finalizarOP('${id}', '${op.produto}')" class="bg-gray-800 hover:bg-black text-white font-bold text-lg py-4 px-2 rounded-lg shadow btn-press flex items-center justify-center gap-2">
+                            <!-- NOVO BOTÃO: Alterar Qtd/Palete -->
+                            <button onclick="alterarQtdPalete('${id}', ${op.qtdPorPalete}, '${op.medida}', ${op.paletesFeitos}, ${op.fardosParciais})" class="bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-sm py-3 px-2 rounded-lg shadow border border-blue-300 btn-press flex flex-col items-center justify-center gap-1">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                Alterar Qtd/Palete
+                            </button>
+
+                            <!-- Botão de Finalizar ocupa as duas colunas abaixo -->
+                            <button onclick="finalizarOP('${id}', '${op.produto}')" class="col-span-2 bg-gray-800 hover:bg-black text-white font-bold text-lg py-3 px-2 rounded-lg shadow btn-press flex items-center justify-center gap-2">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                                 Finalizar OP
                             </button>

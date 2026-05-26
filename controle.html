@@ -9,7 +9,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, collection, setDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Configuração do Firebase atualizada
         const firebaseConfig = {
             apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
             authDomain: "basededados-7ccdd.firebaseapp.com",
@@ -23,7 +22,6 @@
         const db = getFirestore(app);
         const opsCollection = collection(db, "ordens_producao");
 
-        // Base de Produtos
         const baseProdutos = {
             "979 - ACUCAR REFINADO 10X1": { fator: 120, validadeAnos: 1, medida: "FD" },
             "671 - ACUCAR CRISTAL 10X1": { fator: 120, validadeAnos: 2, medida: "FD" },
@@ -76,7 +74,7 @@
             const produtoNome = produtoSelecionado.split(' - ')[1] || produtoSelecionado;
             const produtoCod = produtoSelecionado.split(' - ')[0] || "";
             const lote = document.getElementById('lote').value.toUpperCase();
-            const turno = document.getElementById('turno').value;
+            // Removida a captura do turno daqui
             const metaTotal = parseInt(document.getElementById('metaTotal').value);
             const qtdPorPalete = parseInt(document.getElementById('qtdPorPalete').value);
             const dataProducao = document.getElementById('dataProducao').value;
@@ -85,24 +83,22 @@
             
             const medida = baseProdutos[produtoSelecionado] ? baseProdutos[produtoSelecionado].medida : 'UN';
 
-            if (!produtoSelecionado || !lote || !turno || !metaTotal || !qtdPorPalete || !dataProducao || !dataValidade) {
+            if (!produtoSelecionado || !lote || !metaTotal || !qtdPorPalete || !dataProducao || !dataValidade) {
                 alert("Preencha todos os campos da OP!");
                 return;
             }
 
-            // CRIAÇÃO DO ID CUSTOMIZADO ÚNICO
-            // Adicionado getTime() para garantir que OPs iguais não se sobrescrevam
             const [ano, mes, dia] = dataProducao.split('-');
             const dataBr = `${dia}-${mes}-${ano}`;
             const carimboTempo = new Date().getTime(); 
-            const idCustomizado = `${dataBr} - ${produtoNome} - Lote ${lote} - ${turno} - ${carimboTempo}`;
+            // Removido o turno da formação do ID
+            const idCustomizado = `${dataBr} - ${produtoNome} - Lote ${lote} - ${carimboTempo}`;
 
             try {
                 await setDoc(doc(db, "ordens_producao", idCustomizado), {
                     codigo: produtoCod,
                     produto: produtoNome,
                     lote: lote,
-                    turno: turno,
                     medida: medida,
                     metaTotal: metaTotal,
                     qtdPorPalete: qtdPorPalete,
@@ -143,7 +139,6 @@
                         <td class="p-3 font-mono text-gray-500">${op.codigo}</td>
                         <td class="p-3 font-bold">${op.produto}</td>
                         <td class="p-3 font-mono text-blue-700">${op.lote}</td>
-                        <td class="p-3 text-center font-semibold text-gray-700">${op.turno}</td>
                         <td class="p-3 text-center">${op.metaTotal} ${op.medida}</td>
                         <td class="p-3 text-center">${op.qtdPorPalete}</td>
                         <td class="p-3 text-center font-bold text-green-600">${totalProduzido}</td>
@@ -197,16 +192,6 @@
                 </div>
 
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Turno</label>
-                    <select id="turno" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
-                        <option value="Turno A">Turno A</option>
-                        <option value="Turno B">Turno B</option>
-                        <option value="Turno C">Turno C</option>
-                        <option value="Turno ADM">Turno ADM</option>
-                    </select>
-                </div>
-
-                <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Meta a Produzir (Total)</label>
                     <input type="number" id="metaTotal" class="w-full p-2 border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500" required>
                 </div>
@@ -235,7 +220,6 @@
                         <option value="bg-yellow-500">Amarelo</option>
                         <option value="bg-purple-500">Roxo</option>
                         <option value="bg-orange-500">Laranja</option>
-                        <!-- Novas cores adicionadas abaixo -->
                         <option value="bg-pink-500">Rosa</option>
                         <option value="bg-indigo-500">Índigo</option>
                         <option value="bg-cyan-500">Ciano</option>
@@ -244,7 +228,7 @@
                     </select>
                 </div>
 
-                <div class="col-span-1 md:col-span-3 flex items-end">
+                <div class="col-span-1 md:col-span-4 flex items-end">
                     <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded shadow transition duration-200">
                         Lançar Ordem de Produção
                     </button>
@@ -261,7 +245,6 @@
                             <th class="p-3 rounded-tl">Cód</th>
                             <th class="p-3">Produto</th>
                             <th class="p-3">Lote</th>
-                            <th class="p-3 text-center">Turno</th>
                             <th class="p-3 text-center">Meta Total</th>
                             <th class="p-3 text-center">Qtd/Palete</th>
                             <th class="p-3 text-center">Produzido Agora</th>

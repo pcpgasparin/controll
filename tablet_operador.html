@@ -9,10 +9,11 @@
         body { user-select: none; -webkit-user-select: none; }
         .btn-press { transition: transform 0.1s, opacity 0.1s; }
         .btn-press:active { transform: scale(0.95); opacity: 0.8; }
+        /* Esconde o ícone de calendário padrão em alguns navegadores para ficar mais limpo */
+        ::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        // O "onSnapshot" importado abaixo é o responsável pela atualização em tempo real sem F5!
         import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -49,17 +50,29 @@
             }
         }
 
+        // NOVA FUNÇÃO: Pega a data forçada ou usa a data/hora do servidor
+        function obterDataRegistro() {
+            const dataManual = document.getElementById('seletorDataManual').value;
+            if (dataManual) {
+                // Cria a data no meio-dia para garantir que o fuso horário não mude o dia
+                const [ano, mes, dia] = dataManual.split('-');
+                return new Date(ano, mes - 1, dia, 12, 0, 0); 
+            }
+            return serverTimestamp(); // Automático
+        }
+
         window.registrarPalete = async (id, btnElement, produto, lote, qtdPorPalete, medida) => {
             btnElement.classList.add('scale-95', 'opacity-75');
             setTimeout(() => btnElement.classList.remove('scale-95', 'opacity-75'), 150);
 
             const turnoNoMomentoDoClique = calcularTurnoAtual();
+            const dataAcao = obterDataRegistro();
 
             try {
                 const opRef = doc(db, "ordens_producao", id);
                 await updateDoc(opRef, { 
                     paletesFeitos: increment(1),
-                    dataRegistro: serverTimestamp()
+                    dataRegistro: dataAcao
                 });
 
                 await addDoc(histCollection, {
@@ -70,7 +83,7 @@
                     medida: medida,
                     tipo: "Palete Cheio",
                     turno: turnoNoMomentoDoClique, 
-                    dataRegistro: serverTimestamp(),
+                    dataRegistro: dataAcao,
                     exportadoParaExcel: false
                 });
             } catch (error) {
@@ -90,12 +103,13 @@
             }
 
             const turnoNoMomentoDoClique = calcularTurnoAtual();
+            const dataAcao = obterDataRegistro();
 
             try {
                 const opRef = doc(db, "ordens_producao", id);
                 await updateDoc(opRef, { 
                     fardosParciais: increment(qtd),
-                    dataRegistro: serverTimestamp()
+                    dataRegistro: dataAcao
                 });
 
                 await addDoc(histCollection, {
@@ -106,7 +120,7 @@
                     medida: medida,
                     tipo: "Avulso/Parcial",
                     turno: turnoNoMomentoDoClique, 
-                    dataRegistro: serverTimestamp(),
+                    dataRegistro: dataAcao,
                     exportadoParaExcel: false
                 });
             } catch (error) {
@@ -129,13 +143,14 @@
 
             if (confirm(`Atenção: Os próximos cliques vão valer ${novaQtd} ${medida}.\nConfirmar alteração?`)) {
                 try {
+                    const dataAcao = obterDataRegistro();
                     const totalConsolidadoAteAgora = (paletesFeitos * qtdAtual) + fardosParciais;
                     const opRef = doc(db, "ordens_producao", id);
                     await updateDoc(opRef, { 
                         qtdPorPalete: novaQtd,
                         paletesFeitos: 0, 
                         fardosParciais: totalConsolidadoAteAgora, 
-                        dataRegistro: serverTimestamp()
+                        dataRegistro: dataAcao
                     });
                 } catch (error) {
                     console.error("Erro ao alterar qtd do palete:", error);
@@ -147,10 +162,11 @@
         window.finalizarOP = async (id, produto) => {
             if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela.`)) {
                 try {
+                    const dataAcao = obterDataRegistro();
                     const opRef = doc(db, "ordens_producao", id);
                     await updateDoc(opRef, { 
                         status: 'Finalizada',
-                        dataRegistro: serverTimestamp()
+                        dataRegistro: dataAcao
                     });
                 } catch (error) {
                     console.error("Erro ao finalizar OP:", error);
@@ -159,7 +175,6 @@
             }
         };
 
-        // ESCUTA EM TEMPO REAL: É aqui que a mágica de não precisar do F5 acontece!
         const q = query(opsCollection, where("status", "==", "Aberta"));
         onSnapshot(q, (snapshot) => {
             const painel = document.getElementById('painelOperador');
@@ -235,7 +250,14 @@
             <h1 class="text-3xl font-black tracking-wider">APONTAMENTO DE PRODUÇÃO</h1>
         </div>
         
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-4 flex-wrap">
+            
+            <div class="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700" title="Deixe vazio para usar a data de hoje">
+                <label for="seletorDataManual" class="text-sm font-bold text-gray-300 px-3 uppercase">Data:</label>
+                <input type="date" id="seletorDataManual" class="bg-gray-700 text-white text-lg font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">
+                <button onclick="document.getElementById('seletorDataManual').value = ''" class="ml-2 px-2 py-1 text-xs font-bold bg-gray-600 hover:bg-red-500 text-white rounded transition" title="Limpar Data">X</button>
+            </div>
+
             <div class="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700">
                 <label for="seletorTurnoManual" class="text-sm font-bold text-gray-300 px-3 uppercase">Turno:</label>
                 <select id="seletorTurnoManual" class="bg-gray-700 text-white text-lg font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">

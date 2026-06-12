@@ -9,12 +9,60 @@
         body { user-select: none; -webkit-user-select: none; }
         .btn-press { transition: transform 0.1s, opacity 0.1s; }
         .btn-press:active { transform: scale(0.95); opacity: 0.8; }
-        /* Esconde o ícone de calendário padrão em alguns navegadores para ficar mais limpo */
         ::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
+        
+        /* Feedback visual temporário */
+        .feedback-toast {
+            position: fixed;
+            bottom: 30%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #22c55e;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 60px;
+            font-weight: bold;
+            font-size: 1.2rem;
+            z-index: 2000;
+            animation: fadeInOut 0.5s ease forwards;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3);
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        
+        .feedback-toast-error {
+            background: #ef4444;
+        }
+        
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateX(-50%) scale(0.8); }
+            15% { opacity: 1; transform: translateX(-50%) scale(1.1); }
+            30% { opacity: 1; transform: translateX(-50%) scale(1); }
+            85% { opacity: 1; transform: translateX(-50%) scale(1); }
+            100% { opacity: 0; transform: translateX(-50%) scale(0.8); visibility: hidden; }
+        }
+        
+        /* Notificação padrão (canto inferior) */
+        .toast-notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #1f2937;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 12px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp, addDoc, getDoc, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
@@ -30,6 +78,29 @@
         const opsCollection = collection(db, "ordens_producao");
         const histCollection = collection(db, "historico_producao");
 
+        // Feedback visual temporário (aparece e some)
+        function mostrarFeedback(mensagem, erro = false) {
+            const feedback = document.createElement('div');
+            feedback.className = 'feedback-toast' + (erro ? ' feedback-toast-error' : '');
+            feedback.innerHTML = mensagem;
+            document.body.appendChild(feedback);
+            setTimeout(() => feedback.remove(), 500);
+        }
+
+        // Função para determinar o turno com base no horário (07:02 às 17:50 = Turno D, resto = Turno N)
+        function determinarTurnoPorHorario(data) {
+            const horas = data.getHours();
+            const minutos = data.getMinutes();
+            const tempoEmMinutos = (horas * 60) + minutos;
+            
+            // Turno D: 07:02 (422 min) até 17:50 (1070 min)
+            if (tempoEmMinutos >= 422 && tempoEmMinutos <= 1070) {
+                return "D";
+            } else {
+                return "N";
+            }
+        }
+
         // Função que pega o turno manual ou calcula pela hora
         function calcularTurnoAtual() {
             const seletorTurno = document.getElementById('seletorTurnoManual').value;
@@ -39,33 +110,134 @@
             }
 
             const agora = new Date();
-            const horas = agora.getHours();
-            const minutos = agora.getMinutes();
-            const tempoEmMinutos = (horas * 60) + minutos;
+            return determinarTurnoPorHorario(agora);
+        }
+
+        // Data lógica considerando virada do turno N (após 5h vira o dia)
+        function getDataLogica() {
+            const dataManual = document.getElementById('seletorDataManual').value;
+            if (dataManual) {
+                const [ano, mes, dia] = dataManual.split('-');
+                return new Date(ano, mes - 1, dia, 12, 0, 0);
+            }
             
-            if (tempoEmMinutos >= 420 && tempoEmMinutos <= 1070) {
-                return "D";
+            const agora = new Date();
+            const hora = agora.getHours();
+            // Turno N vai até 05:00, então antes das 5h pertence ao dia anterior
+            if (hora >= 5) {
+                return new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
             } else {
-                return "N";
+                const diaAnterior = new Date(agora);
+                diaAnterior.setDate(agora.getDate() - 1);
+                return new Date(diaAnterior.getFullYear(), diaAnterior.getMonth(), diaAnterior.getDate());
             }
         }
 
-        // NOVA FUNÇÃO: Pega a data forçada ou usa a data/hora do servidor
         function obterDataRegistro() {
             const dataManual = document.getElementById('seletorDataManual').value;
             if (dataManual) {
-                // Cria a data no meio-dia para garantir que o fuso horário não mude o dia
                 const [ano, mes, dia] = dataManual.split('-');
-                return new Date(ano, mes - 1, dia, 12, 0, 0); 
+                return new Date(ano, mes - 1, dia, 12, 0, 0);
             }
-            return serverTimestamp(); // Automático
+            return serverTimestamp();
+        }
+
+        // Contar paletes por turno para uma OP específica
+        async function contarPaletesPorTurno(idOP) {
+            try {
+                const qHist = query(histCollection, where("idOP", "==", idOP), where("tipo", "==", "Palete Cheio"));
+                const snapshot = await getDocs(qHist);
+                
+                let turnoD = 0;
+                let turnoN = 0;
+                
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const turno = data.turno;
+                    
+                    if (turno === "D") {
+                        turnoD++;
+                    } else if (turno === "N") {
+                        turnoN++;
+                    } else {
+                        const dataRegistro = data.dataRegistro?.toDate ? data.dataRegistro.toDate() : new Date();
+                        const turnoDeterminado = determinarTurnoPorHorario(dataRegistro);
+                        if (turnoDeterminado === "D") turnoD++;
+                        else turnoN++;
+                    }
+                });
+                
+                return { turnoD, turnoN };
+            } catch (error) {
+                console.error("Erro ao contar paletes por turno:", error);
+                return { turnoD: 0, turnoN: 0 };
+            }
+        }
+
+        window.apagarUltimoLancamento = async (idOP, produto) => {
+            try {
+                const opRef = doc(db, "ordens_producao", idOP);
+                const opSnap = await getDoc(opRef);
+                const opData = opSnap.data();
+                
+                if (opData.status === "Finalizada") {
+                    mostrarFeedback(`❌ ${produto} finalizada! Não apaga.`, true);
+                    return;
+                }
+                
+                const qHist = query(histCollection, where("idOP", "==", idOP));
+                const snapshot = await getDocs(qHist);
+                
+                if (snapshot.empty || snapshot.docs.length === 0) {
+                    mostrarFeedback(`📭 Nenhum lançamento para ${produto}`, true);
+                    return;
+                }
+                
+                const docsOrdenados = snapshot.docs.sort((a, b) => {
+                    const dataA = a.data().dataRegistro?.toDate?.() || new Date(0);
+                    const dataB = b.data().dataRegistro?.toDate?.() || new Date(0);
+                    return dataB - dataA;
+                });
+                
+                const ultimoDoc = docsOrdenados[0];
+                const ultimoDado = ultimoDoc.data();
+                
+                let tipoRemovido = ultimoDado.tipo === "Palete Cheio" ? "palete" : "avulso";
+                let quantidadeRemovida = ultimoDado.quantidade;
+                
+                if (confirm(`⚠️ Apagar ${tipoRemovido} de ${quantidadeRemovida} ${ultimoDado.medida || ''} da OP ${produto}?`)) {
+                    
+                    await deleteDoc(doc(db, "historico_producao", ultimoDoc.id));
+                    
+                    if (ultimoDado.tipo === "Palete Cheio") {
+                        await updateDoc(opRef, { paletesFeitos: increment(-1) });
+                    } else {
+                        await updateDoc(opRef, { fardosParciais: increment(-quantidadeRemovida) });
+                    }
+                    
+                    mostrarFeedback(`🗑️ ${tipoRemovido} removido!`, false);
+                }
+                
+            } catch (error) {
+                console.error("Erro ao apagar lançamento:", error);
+                mostrarFeedback("❌ Erro ao apagar!", true);
+            }
+        };
+        
+        function mostrarNotificacao(mensagem, tipo = "info") {
+            const toast = document.createElement('div');
+            toast.className = 'toast-notification';
+            toast.innerHTML = mensagem;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
         }
 
         window.registrarPalete = async (id, btnElement, produto, lote, qtdPorPalete, medida) => {
+            // Feedback visual imediato no botão
             btnElement.classList.add('scale-95', 'opacity-75');
-            setTimeout(() => btnElement.classList.remove('scale-95', 'opacity-75'), 150);
-
+            
             const turnoNoMomentoDoClique = calcularTurnoAtual();
+            const dataLogica = getDataLogica();
             const dataAcao = obterDataRegistro();
 
             try {
@@ -84,11 +256,18 @@
                     tipo: "Palete Cheio",
                     turno: turnoNoMomentoDoClique, 
                     dataRegistro: dataAcao,
+                    dataLogica: dataLogica.toISOString(),
                     exportadoParaExcel: false
                 });
+                
+                // Feedback visual de sucesso (aparece no centro da tela e some rápido)
+                mostrarFeedback(`✅ +1 ${medida} (${qtdPorPalete})`, false);
+                
             } catch (error) {
                 console.error("Erro ao registrar palete:", error);
-                alert("Erro de conexão. Tente novamente.");
+                mostrarFeedback("❌ Erro de conexão!", true);
+            } finally {
+                setTimeout(() => btnElement.classList.remove('scale-95', 'opacity-75'), 150);
             }
         };
 
@@ -103,6 +282,7 @@
             }
 
             const turnoNoMomentoDoClique = calcularTurnoAtual();
+            const dataLogica = getDataLogica();
             const dataAcao = obterDataRegistro();
 
             try {
@@ -121,11 +301,15 @@
                     tipo: "Avulso/Parcial",
                     turno: turnoNoMomentoDoClique, 
                     dataRegistro: dataAcao,
+                    dataLogica: dataLogica.toISOString(),
                     exportadoParaExcel: false
                 });
+                
+                mostrarFeedback(`✅ +${qtd} ${medida} avulso`, false);
+                
             } catch (error) {
                 console.error("Erro ao registrar parcial:", error);
-                alert("Erro de conexão. Tente novamente.");
+                mostrarFeedback("❌ Erro de conexão!", true);
             }
         };
 
@@ -143,40 +327,42 @@
 
             if (confirm(`Atenção: Os próximos cliques vão valer ${novaQtd} ${medida}.\nConfirmar alteração?`)) {
                 try {
-                    const dataAcao = obterDataRegistro();
+                    const dataLogica = getDataLogica();
                     const totalConsolidadoAteAgora = (paletesFeitos * qtdAtual) + fardosParciais;
                     const opRef = doc(db, "ordens_producao", id);
                     await updateDoc(opRef, { 
                         qtdPorPalete: novaQtd,
                         paletesFeitos: 0, 
                         fardosParciais: totalConsolidadoAteAgora, 
-                        dataRegistro: dataAcao
+                        dataRegistro: dataLogica
                     });
+                    mostrarFeedback(`⚙️ Padrão alterado: ${novaQtd} ${medida}`, false);
                 } catch (error) {
                     console.error("Erro ao alterar qtd do palete:", error);
-                    alert("Erro de conexão. Tente novamente.");
+                    mostrarFeedback("❌ Erro ao alterar!", true);
                 }
             }
         };
 
         window.finalizarOP = async (id, produto) => {
-            if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela.`)) {
+            if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela e NÃO será mais possível apagar lançamentos.`)) {
                 try {
-                    const dataAcao = obterDataRegistro();
+                    const dataLogica = getDataLogica();
                     const opRef = doc(db, "ordens_producao", id);
                     await updateDoc(opRef, { 
                         status: 'Finalizada',
-                        dataRegistro: dataAcao
+                        dataRegistro: dataLogica
                     });
+                    mostrarFeedback(`🏁 ${produto} finalizada!`, false);
                 } catch (error) {
                     console.error("Erro ao finalizar OP:", error);
-                    alert("Erro de conexão. Tente novamente.");
+                    mostrarFeedback("❌ Erro ao finalizar!", true);
                 }
             }
         };
 
         const q = query(opsCollection, where("status", "==", "Aberta"));
-        onSnapshot(q, (snapshot) => {
+        onSnapshot(q, async (snapshot) => {
             const painel = document.getElementById('painelOperador');
             painel.innerHTML = ''; 
             
@@ -191,88 +377,109 @@
                 return;
             }
 
-            snapshot.forEach((docSnap) => {
+            for (const docSnap of snapshot.docs) {
                 const op = docSnap.data();
                 const id = docSnap.id;
                 
                 const totalProduzido = (op.paletesFeitos * op.qtdPorPalete) + op.fardosParciais;
+                const contagemTurnos = await contarPaletesPorTurno(id);
                 
                 painel.innerHTML += `
                     <div class="bg-white rounded-2xl shadow-xl border-4 border-gray-200 p-4 flex flex-col h-full">
-                        <div class="text-center mb-4">
-                            <h2 class="text-3xl font-black text-gray-800 leading-tight">${op.produto}</h2>
-                            <div class="flex justify-center gap-4 mt-2">
-                                <span class="bg-blue-100 text-blue-800 px-4 py-1 rounded-full text-xl font-bold font-mono border border-blue-300">LOTE: ${op.lote}</span>
-                                <span class="bg-gray-100 text-gray-700 px-4 py-1 rounded-full text-lg font-semibold border border-gray-300">META: ${op.metaTotal} ${op.medida}</span>
+                        <div class="text-center mb-3">
+                            <h2 class="text-2xl font-black text-gray-800 leading-tight">${op.produto}</h2>
+                            <div class="flex justify-center gap-2 mt-1 flex-wrap">
+                                <span class="bg-blue-100 text-blue-800 px-3 py-0.5 rounded-full text-sm font-bold font-mono border border-blue-300">LOTE: ${op.lote}</span>
+                                <span class="bg-gray-100 text-gray-700 px-3 py-0.5 rounded-full text-sm font-semibold border border-gray-300">META: ${op.metaTotal} ${op.medida}</span>
                             </div>
+                        </div>
+
+                        <div class="flex justify-center gap-3 mb-2">
+                            <div class="bg-gray-100 rounded-lg px-2 py-0.5 flex items-center gap-1">
+                                <span class="font-bold text-blue-700 text-xs">D:</span>
+                                <span class="font-black text-blue-800 text-base">${contagemTurnos.turnoD}</span>
+                            </div>
+                            <div class="bg-gray-100 rounded-lg px-2 py-0.5 flex items-center gap-1">
+                                <span class="font-bold text-purple-700 text-xs">N:</span>
+                                <span class="font-black text-purple-800 text-base">${contagemTurnos.turnoN}</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-gradient-to-r from-green-500 to-green-600 rounded-lg p-1 mb-3 text-center shadow">
+                            <p class="text-white text-xs font-bold uppercase">📦 Paletes</p>
+                            <p class="text-2xl font-black text-white">${op.paletesFeitos}</p>
                         </div>
 
                         <button 
                             onclick="registrarPalete('${id}', this, '${op.produto}', '${op.lote}', ${op.qtdPorPalete}, '${op.medida}')" 
-                            class="flex-1 w-full ${op.corBotao} text-white rounded-xl shadow-lg flex flex-col items-center justify-center p-6 btn-press min-h-[250px] mb-4">
-                            <span class="text-6xl font-black mb-2">+1</span>
-                            <span class="text-3xl font-bold tracking-wide">PALETE</span>
-                            <span class="text-xl font-medium mt-2 bg-black bg-opacity-20 px-4 py-1 rounded-full">Contém ${op.qtdPorPalete} ${op.medida}</span>
+                            class="w-full ${op.corBotao} text-white rounded-xl shadow-lg flex flex-col items-center justify-center p-4 btn-press mb-3">
+                            <span class="text-5xl font-black mb-0">+1</span>
+                            <span class="text-xl font-bold tracking-wide">PALETE</span>
+                            <span class="text-xs font-medium mt-1 bg-black bg-opacity-20 px-2 py-0.5 rounded-full">${op.qtdPorPalete} ${op.medida}</span>
                         </button>
 
-                        <div class="bg-gray-100 rounded-lg p-3 text-center mb-4 border border-gray-200">
-                            <p class="text-lg text-gray-600 font-semibold uppercase">Total Produzido Agora</p>
-                            <p class="text-4xl font-black text-green-600">${totalProduzido} <span class="text-2xl text-gray-500">${op.medida}</span></p>
+                        <div class="bg-gray-100 rounded-lg p-1 text-center mb-3 border border-gray-200">
+                            <p class="text-xs text-gray-600 font-semibold uppercase">Total Produzido</p>
+                            <p class="text-xl font-black text-green-600">${totalProduzido} <span class="text-xs text-gray-500">${op.medida}</span></p>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-3 mt-auto">
-                            <button onclick="registrarParcial('${id}', '${op.medida}', '${op.produto}', '${op.lote}')" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold text-sm py-3 px-2 rounded-lg shadow btn-press flex flex-col items-center justify-center gap-1">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-                                Palete Incompleto
+                        <div class="grid grid-cols-4 gap-2 mt-auto">
+                            <button onclick="registrarParcial('${id}', '${op.medida}', '${op.produto}', '${op.lote}')" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold text-xs py-2 rounded-lg shadow btn-press flex flex-col items-center justify-center">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                <span>Avulso</span>
                             </button>
                             
-                            <button onclick="alterarQtdPalete('${id}', ${op.qtdPorPalete}, '${op.medida}', ${op.paletesFeitos}, ${op.fardosParciais})" class="bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-sm py-3 px-2 rounded-lg shadow border border-blue-300 btn-press flex flex-col items-center justify-center gap-1">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                                Alterar Qtd/Palete
+                            <button onclick="alterarQtdPalete('${id}', ${op.qtdPorPalete}, '${op.medida}', ${op.paletesFeitos}, ${op.fardosParciais})" class="bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-xs py-2 rounded-lg shadow border border-blue-300 btn-press flex flex-col items-center justify-center">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                <span>Alterar</span>
                             </button>
 
-                            <button onclick="finalizarOP('${id}', '${op.produto}')" class="col-span-2 bg-gray-800 hover:bg-black text-white font-bold text-lg py-3 px-2 rounded-lg shadow btn-press flex items-center justify-center gap-2">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                                Finalizar OP
+                            <button onclick="apagarUltimoLancamento('${id}', '${op.produto}')" class="bg-red-500 hover:bg-red-600 text-white font-bold text-xs py-2 rounded-lg shadow btn-press flex flex-col items-center justify-center">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                <span>Apagar</span>
+                            </button>
+
+                            <button onclick="finalizarOP('${id}', '${op.produto}')" class="bg-gray-800 hover:bg-black text-white font-bold text-xs py-2 rounded-lg shadow btn-press flex flex-col items-center justify-center">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                <span>Finalizar</span>
                             </button>
                         </div>
                     </div>
                 `;
-            });
+            }
         });
     </script>
 </head>
 <body class="bg-slate-200 font-sans min-h-screen flex flex-col">
 
-    <header class="bg-gray-900 text-white p-4 shadow-lg flex justify-between items-center flex-wrap gap-4">
-        <div class="flex items-center gap-3">
-            <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-            <h1 class="text-3xl font-black tracking-wider">APONTAMENTO DE PRODUÇÃO</h1>
+    <header class="bg-gray-900 text-white p-3 shadow-lg flex justify-between items-center flex-wrap gap-3">
+        <div class="flex items-center gap-2">
+            <svg class="w-7 h-7 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            <h1 class="text-2xl font-black tracking-wider">APONTAMENTO DE PRODUÇÃO</h1>
         </div>
         
-        <div class="flex items-center gap-4 flex-wrap">
-            
-            <div class="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700" title="Deixe vazio para usar a data de hoje">
-                <label for="seletorDataManual" class="text-sm font-bold text-gray-300 px-3 uppercase">Data:</label>
-                <input type="date" id="seletorDataManual" class="bg-gray-700 text-white text-lg font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">
-                <button onclick="document.getElementById('seletorDataManual').value = ''" class="ml-2 px-2 py-1 text-xs font-bold bg-gray-600 hover:bg-red-500 text-white rounded transition" title="Limpar Data">X</button>
+        <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700">
+                <label for="seletorDataManual" class="text-xs font-bold text-gray-300 px-2 uppercase">Data:</label>
+                <input type="date" id="seletorDataManual" class="bg-gray-700 text-white text-base font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">
+                <button onclick="document.getElementById('seletorDataManual').value = ''" class="ml-1 px-2 py-0.5 text-xs font-bold bg-gray-600 hover:bg-red-500 text-white rounded transition">X</button>
             </div>
 
             <div class="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700">
-                <label for="seletorTurnoManual" class="text-sm font-bold text-gray-300 px-3 uppercase">Turno:</label>
-                <select id="seletorTurnoManual" class="bg-gray-700 text-white text-lg font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">
-                    <option value="AUTO">Automático (Pela Hora)</option>
-                    <option value="D">Turno D (Forçar)</option>
-                    <option value="N">Turno N (Forçar)</option>
+                <label for="seletorTurnoManual" class="text-xs font-bold text-gray-300 px-2 uppercase">Turno:</label>
+                <select id="seletorTurnoManual" class="bg-gray-700 text-white text-base font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">
+                    <option value="AUTO">Automático</option>
+                    <option value="D">Turno D</option>
+                    <option value="N">Turno N</option>
                 </select>
             </div>
             
-            <div id="relogio" class="text-2xl font-mono font-bold bg-gray-800 px-4 py-2 rounded-lg border border-gray-700">--:--:--</div>
+            <div id="relogio" class="text-xl font-mono font-bold bg-gray-800 px-3 py-1 rounded-lg border border-gray-700">--:--:--</div>
         </div>
     </header>
 
-    <main class="flex-1 p-6">
-        <div id="painelOperador" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 h-full auto-rows-fr"></div>
+    <main class="flex-1 p-4">
+        <div id="painelOperador" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full auto-rows-fr"></div>
     </main>
 
     <script>

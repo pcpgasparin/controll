@@ -78,6 +78,18 @@
         const opsCollection = collection(db, "ordens_producao");
         const histCollection = collection(db, "historico_producao");
 
+        // --- SISTEMA ANTIDUPLO-CLIQUE ---
+        // Armazena a hora do último clique para evitar registros duplos por problema no mouse
+        const bloqueioCliques = {};
+        function cliqueBloqueado(acaoId) {
+            const agora = Date.now();
+            if (bloqueioCliques[acaoId] && agora - bloqueioCliques[acaoId] < 1500) {
+                return true; // Bloqueia se o último clique foi há menos de 1.5 segundos
+            }
+            bloqueioCliques[acaoId] = agora;
+            return false; // Permite o clique
+        }
+
         // Feedback visual temporário (aparece e some)
         function mostrarFeedback(mensagem, erro = false) {
             const feedback = document.createElement('div');
@@ -175,6 +187,8 @@
         }
 
         window.apagarUltimoLancamento = async (idOP, produto) => {
+            if (cliqueBloqueado(idOP + '_apagar')) return; // Trava do duplo clique
+
             try {
                 const opRef = doc(db, "ordens_producao", idOP);
                 const opSnap = await getDoc(opRef);
@@ -233,7 +247,10 @@
         }
 
         window.registrarPalete = async (id, btnElement, produto, lote, qtdPorPalete, medida) => {
-            // Feedback visual imediato no botão
+            if (cliqueBloqueado(id + '_palete')) return; // Trava contra o duplo clique do mouse
+
+            // Feedback visual imediato no botão e bloqueio de interações extras
+            btnElement.style.pointerEvents = 'none';
             btnElement.classList.add('scale-95', 'opacity-75');
             
             const turnoNoMomentoDoClique = calcularTurnoAtual();
@@ -269,11 +286,19 @@
                 console.error("Erro ao registrar palete:", error);
                 mostrarFeedback("❌ Erro de conexão!", true);
             } finally {
-                setTimeout(() => btnElement.classList.remove('scale-95', 'opacity-75'), 150);
+                // Restaura o botão após 1,5 segundos pra garantir que não pegou duplicação
+                setTimeout(() => {
+                    if(btnElement) {
+                        btnElement.style.pointerEvents = 'auto';
+                        btnElement.classList.remove('scale-95', 'opacity-75');
+                    }
+                }, 1500);
             }
         };
 
         window.registrarParcial = async (id, medida, produto, lote) => {
+            if (cliqueBloqueado(id + '_parcial')) return; // Trava do duplo clique
+
             let qtdStr = prompt(`Digite a quantidade de ${medida} avulsos (Palete Incompleto):`);
             if (qtdStr === null || qtdStr.trim() === "") return; 
             
@@ -317,6 +342,8 @@
         };
 
         window.alterarQtdPalete = async (id, qtdAtual, medida, paletesFeitos, fardosParciais) => {
+            if (cliqueBloqueado(id + '_alterar')) return; // Trava do duplo clique
+
             let novaQtdStr = prompt(`Quantidade atual: ${qtdAtual} ${medida} por palete.\nDigite a NOVA quantidade padrão para este palete:`, qtdAtual);
             if (novaQtdStr === null || novaQtdStr.trim() === "") return;
             
@@ -348,6 +375,8 @@
         };
 
         window.finalizarOP = async (id, produto) => {
+            if (cliqueBloqueado(id + '_finalizar')) return; // Trava do duplo clique
+
             if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela e NÃO será mais possível apagar lançamentos.`)) {
                 try {
                     const dataLogica = getDataLogica();

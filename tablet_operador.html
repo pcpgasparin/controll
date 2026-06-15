@@ -241,12 +241,8 @@
             const dataAcao = obterDataRegistro();
 
             try {
-                const opRef = doc(db, "ordens_producao", id);
-                await updateDoc(opRef, { 
-                    paletesFeitos: increment(1),
-                    dataRegistro: dataAcao
-                });
-
+                // BUG 2 FIX: Salvar primeiro no Histórico, e SÓ DEPOIS atualizar a Ordem de Produção!
+                // Assim o onSnapshot vai encontrar o histórico recém criado quando renderizar o Card.
                 await addDoc(histCollection, {
                     idOP: id,
                     produto: produto,
@@ -258,6 +254,12 @@
                     dataRegistro: dataAcao,
                     dataLogica: dataLogica.toISOString(),
                     exportadoParaExcel: false
+                });
+
+                const opRef = doc(db, "ordens_producao", id);
+                await updateDoc(opRef, { 
+                    paletesFeitos: increment(1),
+                    dataRegistro: dataAcao
                 });
                 
                 // Feedback visual de sucesso (aparece no centro da tela e some rápido)
@@ -286,12 +288,7 @@
             const dataAcao = obterDataRegistro();
 
             try {
-                const opRef = doc(db, "ordens_producao", id);
-                await updateDoc(opRef, { 
-                    fardosParciais: increment(qtd),
-                    dataRegistro: dataAcao
-                });
-
+                // BUG 2 FIX: Salvar histórico antes da Ordem de Produção
                 await addDoc(histCollection, {
                     idOP: id,
                     produto: produto,
@@ -305,6 +302,12 @@
                     exportadoParaExcel: false
                 });
                 
+                const opRef = doc(db, "ordens_producao", id);
+                await updateDoc(opRef, { 
+                    fardosParciais: increment(qtd),
+                    dataRegistro: dataAcao
+                });
+
                 mostrarFeedback(`✅ +${qtd} ${medida} avulso`, false);
                 
             } catch (error) {
@@ -362,29 +365,37 @@
         };
 
         const q = query(opsCollection, where("status", "==", "Aberta"));
+        
+        // BUG 1 FIX: Usar uma variável renderId para prevenir o "Race Condition" de atualizações múltiplas.
+        let renderId = 0; 
+
         onSnapshot(q, async (snapshot) => {
+            const currentRenderId = ++renderId;
             const painel = document.getElementById('painelOperador');
-            painel.innerHTML = ''; 
             
             if (snapshot.empty) {
-                painel.innerHTML = `
-                    <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
-                        <svg class="w-20 h-20 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        <h2 class="text-3xl font-bold">Nenhuma Ordem de Produção Aberta</h2>
-                        <p class="text-xl mt-2">Aguardando liberação do PCP...</p>
-                    </div>
-                `;
+                if (currentRenderId === renderId) {
+                    painel.innerHTML = `
+                        <div class="col-span-full flex flex-col items-center justify-center h-64 text-gray-400">
+                            <svg class="w-20 h-20 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <h2 class="text-3xl font-bold">Nenhuma Ordem de Produção Aberta</h2>
+                            <p class="text-xl mt-2">Aguardando liberação do PCP...</p>
+                        </div>
+                    `;
+                }
                 return;
             }
 
-            for (const docSnap of snapshot.docs) {
+            // BUG 1 FIX: Mapear todos os documentos e aguardar (Promise.all) antes de injetar de uma vez no HTML,
+            // impedindo que o layout pule e cards se repitam.
+            const htmlPromises = snapshot.docs.map(async (docSnap) => {
                 const op = docSnap.data();
                 const id = docSnap.id;
                 
                 const totalProduzido = (op.paletesFeitos * op.qtdPorPalete) + op.fardosParciais;
                 const contagemTurnos = await contarPaletesPorTurno(id);
                 
-                painel.innerHTML += `
+                return `
                     <div class="bg-white rounded-2xl shadow-xl border-4 border-gray-200 p-4 flex flex-col h-full">
                         <div class="text-center mb-3">
                             <h2 class="text-2xl font-black text-gray-800 leading-tight">${op.produto}</h2>
@@ -446,6 +457,14 @@
                         </div>
                     </div>
                 `;
+            });
+
+            // Aguarda todas as funções assíncronas do loop acima terminarem e então une o HTML.
+            const cardsResolvidos = await Promise.all(htmlPromises);
+
+            // Confirmação final de que esta é a atualização mais recente para evitar duplicações visuais
+            if (currentRenderId === renderId) {
+                painel.innerHTML = cardsResolvidos.join('');
             }
         });
     </script>

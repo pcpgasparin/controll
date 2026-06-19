@@ -199,6 +199,8 @@
                     return;
                 }
                 
+                const turnoAtual = calcularTurnoAtual(); // Identifica o turno atual selecionado/automático
+
                 const qHist = query(histCollection, where("idOP", "==", idOP));
                 const snapshot = await getDocs(qHist);
                 
@@ -207,7 +209,18 @@
                     return;
                 }
                 
-                const docsOrdenados = snapshot.docs.sort((a, b) => {
+                // Filtra os lançamentos EXCLUSIVAMENTE para o turno atual
+                const docsDoTurno = snapshot.docs.filter(doc => {
+                    return doc.data().turno === turnoAtual;
+                });
+
+                if (docsDoTurno.length === 0) {
+                    mostrarFeedback(`📭 Nenhum lançamento no Turno ${turnoAtual} para ${produto}`, true);
+                    return;
+                }
+
+                // Ordena apenas os documentos do turno atual para encontrar o último
+                const docsOrdenados = docsDoTurno.sort((a, b) => {
                     const dataA = a.data().dataRegistro?.toDate?.() || new Date(0);
                     const dataB = b.data().dataRegistro?.toDate?.() || new Date(0);
                     return dataB - dataA;
@@ -219,7 +232,7 @@
                 let tipoRemovido = ultimoDado.tipo === "Palete Cheio" ? "palete" : "avulso";
                 let quantidadeRemovida = ultimoDado.quantidade;
                 
-                if (confirm(`⚠️ Apagar ${tipoRemovido} de ${quantidadeRemovida} ${ultimoDado.medida || ''} da OP ${produto}?`)) {
+                if (confirm(`⚠️ Apagar ${tipoRemovido} de ${quantidadeRemovida} ${ultimoDado.medida || ''} da OP ${produto} (Turno ${turnoAtual})?`)) {
                     
                     await deleteDoc(doc(db, "historico_producao", ultimoDoc.id));
                     
@@ -229,7 +242,7 @@
                         await updateDoc(opRef, { fardosParciais: increment(-quantidadeRemovida) });
                     }
                     
-                    mostrarFeedback(`🗑️ ${tipoRemovido} removido!`, false);
+                    mostrarFeedback(`🗑️ ${tipoRemovido} removido (Turno ${turnoAtual})!`, false);
                 }
                 
             } catch (error) {

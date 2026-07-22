@@ -79,18 +79,16 @@
         const histCollection = collection(db, "historico_producao");
 
         // --- SISTEMA ANTIDUPLO-CLIQUE ---
-        // Armazena a hora do último clique para evitar registros duplos por problema no mouse
         const bloqueioCliques = {};
         function cliqueBloqueado(acaoId) {
             const agora = Date.now();
             if (bloqueioCliques[acaoId] && agora - bloqueioCliques[acaoId] < 1500) {
-                return true; // Bloqueia se o último clique foi há menos de 1.5 segundos
+                return true; 
             }
             bloqueioCliques[acaoId] = agora;
-            return false; // Permite o clique
+            return false; 
         }
 
-        // Feedback visual temporário (aparece e some)
         function mostrarFeedback(mensagem, erro = false) {
             const feedback = document.createElement('div');
             feedback.className = 'feedback-toast' + (erro ? ' feedback-toast-error' : '');
@@ -99,13 +97,11 @@
             setTimeout(() => feedback.remove(), 500);
         }
 
-        // Função para determinar o turno com base no horário (07:02 às 17:50 = Turno D, resto = Turno N)
         function determinarTurnoPorHorario(data) {
             const horas = data.getHours();
             const minutos = data.getMinutes();
             const tempoEmMinutos = (horas * 60) + minutos;
             
-            // Turno D: 07:02 (422 min) até 17:50 (1070 min)
             if (tempoEmMinutos >= 422 && tempoEmMinutos <= 1070) {
                 return "D";
             } else {
@@ -113,7 +109,6 @@
             }
         }
 
-        // Função que pega o turno manual ou calcula pela hora
         function calcularTurnoAtual() {
             const seletorTurno = document.getElementById('seletorTurnoManual').value;
             
@@ -125,7 +120,6 @@
             return determinarTurnoPorHorario(agora);
         }
 
-        // Data lógica considerando virada do turno N (após 5h vira o dia)
         function getDataLogica() {
             const dataManual = document.getElementById('seletorDataManual').value;
             if (dataManual) {
@@ -135,7 +129,6 @@
             
             const agora = new Date();
             const hora = agora.getHours();
-            // Turno N vai até 05:00, então antes das 5h pertence ao dia anterior
             if (hora >= 5) {
                 return new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
             } else {
@@ -154,10 +147,10 @@
             return serverTimestamp();
         }
 
-        // Contar paletes por turno para uma OP específica
-        async function contarPaletesPorTurno(idOP) {
+        // Função ATUALIZADA: Conta a quantidade total de produtos (e não apenas paletes)
+        async function calcularProducaoPorTurno(idOP) {
             try {
-                const qHist = query(histCollection, where("idOP", "==", idOP), where("tipo", "==", "Palete Cheio"));
+                const qHist = query(histCollection, where("idOP", "==", idOP));
                 const snapshot = await getDocs(qHist);
                 
                 let turnoD = 0;
@@ -166,28 +159,30 @@
                 snapshot.forEach((doc) => {
                     const data = doc.data();
                     const turno = data.turno;
+                    const quantidade = data.quantidade || 0;
                     
-                    if (turno === "D") {
-                        turnoD++;
-                    } else if (turno === "N") {
-                        turnoN++;
-                    } else {
+                    let turnoCorreto = turno;
+                    if (turno !== "D" && turno !== "N") {
                         const dataRegistro = data.dataRegistro?.toDate ? data.dataRegistro.toDate() : new Date();
-                        const turnoDeterminado = determinarTurnoPorHorario(dataRegistro);
-                        if (turnoDeterminado === "D") turnoD++;
-                        else turnoN++;
+                        turnoCorreto = determinarTurnoPorHorario(dataRegistro);
+                    }
+                    
+                    if (turnoCorreto === "D") {
+                        turnoD += quantidade;
+                    } else {
+                        turnoN += quantidade;
                     }
                 });
                 
                 return { turnoD, turnoN };
             } catch (error) {
-                console.error("Erro ao contar paletes por turno:", error);
+                console.error("Erro ao calcular produção por turno:", error);
                 return { turnoD: 0, turnoN: 0 };
             }
         }
 
         window.apagarUltimoLancamento = async (idOP, produto) => {
-            if (cliqueBloqueado(idOP + '_apagar')) return; // Trava do duplo clique
+            if (cliqueBloqueado(idOP + '_apagar')) return; 
 
             try {
                 const opRef = doc(db, "ordens_producao", idOP);
@@ -199,7 +194,7 @@
                     return;
                 }
                 
-                const turnoAtual = calcularTurnoAtual(); // Identifica o turno atual selecionado/automático
+                const turnoAtual = calcularTurnoAtual(); 
 
                 const qHist = query(histCollection, where("idOP", "==", idOP));
                 const snapshot = await getDocs(qHist);
@@ -209,7 +204,6 @@
                     return;
                 }
                 
-                // Filtra os lançamentos EXCLUSIVAMENTE para o turno atual
                 const docsDoTurno = snapshot.docs.filter(doc => {
                     return doc.data().turno === turnoAtual;
                 });
@@ -219,7 +213,6 @@
                     return;
                 }
 
-                // Ordena apenas os documentos do turno atual para encontrar o último
                 const docsOrdenados = docsDoTurno.sort((a, b) => {
                     const dataA = a.data().dataRegistro?.toDate?.() || new Date(0);
                     const dataB = b.data().dataRegistro?.toDate?.() || new Date(0);
@@ -260,9 +253,8 @@
         }
 
         window.registrarPalete = async (id, btnElement, produto, lote, qtdPorPalete, medida) => {
-            if (cliqueBloqueado(id + '_palete')) return; // Trava contra o duplo clique do mouse
+            if (cliqueBloqueado(id + '_palete')) return; 
 
-            // Feedback visual imediato no botão e bloqueio de interações extras
             btnElement.style.pointerEvents = 'none';
             btnElement.classList.add('scale-95', 'opacity-75');
             
@@ -271,8 +263,6 @@
             const dataAcao = obterDataRegistro();
 
             try {
-                // BUG 2 FIX: Salvar primeiro no Histórico, e SÓ DEPOIS atualizar a Ordem de Produção!
-                // Assim o onSnapshot vai encontrar o histórico recém criado quando renderizar o Card.
                 await addDoc(histCollection, {
                     idOP: id,
                     produto: produto,
@@ -292,14 +282,12 @@
                     dataRegistro: dataAcao
                 });
                 
-                // Feedback visual de sucesso (aparece no centro da tela e some rápido)
                 mostrarFeedback(`✅ +1 ${medida} (${qtdPorPalete})`, false);
                 
             } catch (error) {
                 console.error("Erro ao registrar palete:", error);
                 mostrarFeedback("❌ Erro de conexão!", true);
             } finally {
-                // Restaura o botão após 1,5 segundos pra garantir que não pegou duplicação
                 setTimeout(() => {
                     if(btnElement) {
                         btnElement.style.pointerEvents = 'auto';
@@ -310,7 +298,7 @@
         };
 
         window.registrarParcial = async (id, medida, produto, lote) => {
-            if (cliqueBloqueado(id + '_parcial')) return; // Trava do duplo clique
+            if (cliqueBloqueado(id + '_parcial')) return; 
 
             let qtdStr = prompt(`Digite a quantidade de ${medida} avulsos (Palete Incompleto):`);
             if (qtdStr === null || qtdStr.trim() === "") return; 
@@ -326,7 +314,6 @@
             const dataAcao = obterDataRegistro();
 
             try {
-                // BUG 2 FIX: Salvar histórico antes da Ordem de Produção
                 await addDoc(histCollection, {
                     idOP: id,
                     produto: produto,
@@ -355,7 +342,7 @@
         };
 
         window.alterarQtdPalete = async (id, qtdAtual, medida, paletesFeitos, fardosParciais) => {
-            if (cliqueBloqueado(id + '_alterar')) return; // Trava do duplo clique
+            if (cliqueBloqueado(id + '_alterar')) return; 
 
             let novaQtdStr = prompt(`Quantidade atual: ${qtdAtual} ${medida} por palete.\nDigite a NOVA quantidade padrão para este palete:`, qtdAtual);
             if (novaQtdStr === null || novaQtdStr.trim() === "") return;
@@ -388,7 +375,7 @@
         };
 
         window.finalizarOP = async (id, produto) => {
-            if (cliqueBloqueado(id + '_finalizar')) return; // Trava do duplo clique
+            if (cliqueBloqueado(id + '_finalizar')) return; 
 
             if (confirm(`Atenção: A produção de ${produto} foi totalmente concluída? Ela irá sumir da tela e NÃO será mais possível apagar lançamentos.`)) {
                 try {
@@ -407,8 +394,6 @@
         };
 
         const q = query(opsCollection, where("status", "==", "Aberta"));
-        
-        // BUG 1 FIX: Usar uma variável renderId para prevenir o "Race Condition" de atualizações múltiplas.
         let renderId = 0; 
 
         onSnapshot(q, async (snapshot) => {
@@ -428,33 +413,33 @@
                 return;
             }
 
-            // BUG 1 FIX: Mapear todos os documentos e aguardar (Promise.all) antes de injetar de uma vez no HTML,
-            // impedindo que o layout pule e cards se repitam.
             const htmlPromises = snapshot.docs.map(async (docSnap) => {
                 const op = docSnap.data();
                 const id = docSnap.id;
                 
                 const totalProduzido = (op.paletesFeitos * op.qtdPorPalete) + op.fardosParciais;
-                const contagemTurnos = await contarPaletesPorTurno(id);
+                const producaoTurnos = await calcularProducaoPorTurno(id);
                 
                 return `
                     <div class="bg-white rounded-2xl shadow-xl border-4 border-gray-200 p-4 flex flex-col h-full">
-                        <div class="text-center mb-3">
+                        <div class="text-center mb-2">
                             <h2 class="text-2xl font-black text-gray-800 leading-tight">${op.produto}</h2>
                             <div class="flex justify-center gap-2 mt-1 flex-wrap">
                                 <span class="bg-blue-100 text-blue-800 px-3 py-0.5 rounded-full text-sm font-bold font-mono border border-blue-300">LOTE: ${op.lote}</span>
-                                <span class="bg-gray-100 text-gray-700 px-3 py-0.5 rounded-full text-sm font-semibold border border-gray-300">META: ${op.metaTotal} ${op.medida}</span>
+                                <span class="bg-gray-100 text-gray-700 px-3 py-0.5 rounded-full text-sm font-semibold border border-gray-300">META TOTAL: ${op.metaTotal || 0} ${op.medida}</span>
                             </div>
                         </div>
 
-                        <div class="flex justify-center gap-3 mb-2">
-                            <div class="bg-gray-100 rounded-lg px-2 py-0.5 flex items-center gap-1">
-                                <span class="font-bold text-blue-700 text-xs">D:</span>
-                                <span class="font-black text-blue-800 text-base">${contagemTurnos.turnoD}</span>
+                        <!-- Placares de Turno (Somente Leitura) -->
+                        <div class="flex justify-center gap-2 mb-3 w-full">
+                            <div class="bg-blue-50 rounded-lg p-2 flex-1 border border-blue-200 text-center shadow-sm">
+                                <div class="font-bold text-blue-700 text-xs uppercase mb-0.5">Turno D</div>
+                                <div class="font-black text-blue-900 text-xl">${producaoTurnos.turnoD} <span class="text-xs text-blue-500 font-bold">/ ${op.metaTurnoD || 0}</span></div>
                             </div>
-                            <div class="bg-gray-100 rounded-lg px-2 py-0.5 flex items-center gap-1">
-                                <span class="font-bold text-purple-700 text-xs">N:</span>
-                                <span class="font-black text-purple-800 text-base">${contagemTurnos.turnoN}</span>
+                            
+                            <div class="bg-purple-50 rounded-lg p-2 flex-1 border border-purple-200 text-center shadow-sm">
+                                <div class="font-bold text-purple-700 text-xs uppercase mb-0.5">Turno N</div>
+                                <div class="font-black text-purple-900 text-xl">${producaoTurnos.turnoN} <span class="text-xs text-purple-500 font-bold">/ ${op.metaTurnoN || 0}</span></div>
                             </div>
                         </div>
 
@@ -465,7 +450,7 @@
 
                         <button 
                             onclick="registrarPalete('${id}', this, '${op.produto}', '${op.lote}', ${op.qtdPorPalete}, '${op.medida}')" 
-                            class="w-full ${op.corBotao} text-white rounded-xl shadow-lg flex flex-col items-center justify-center p-4 btn-press mb-3">
+                            class="w-full ${op.corBotao || 'bg-blue-500'} text-white rounded-xl shadow-lg flex flex-col items-center justify-center p-4 btn-press mb-3">
                             <span class="text-5xl font-black mb-0">+1</span>
                             <span class="text-xl font-bold tracking-wide">PALETE</span>
                             <span class="text-xs font-medium mt-1 bg-black bg-opacity-20 px-2 py-0.5 rounded-full">${op.qtdPorPalete} ${op.medida}</span>
@@ -501,10 +486,8 @@
                 `;
             });
 
-            // Aguarda todas as funções assíncronas do loop acima terminarem e então une o HTML.
             const cardsResolvidos = await Promise.all(htmlPromises);
 
-            // Confirmação final de que esta é a atualização mais recente para evitar duplicações visuais
             if (currentRenderId === renderId) {
                 painel.innerHTML = cardsResolvidos.join('');
             }

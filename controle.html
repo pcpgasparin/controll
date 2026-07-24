@@ -8,7 +8,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; }
-        /* Scrollbar customizada para a tabela */
         ::-webkit-scrollbar { height: 8px; width: 8px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -49,7 +48,6 @@
             "8517 - ACUCAR DEMERARA 25 KG": { fator: 50, validadeAnos: 1, medida: "SC" },
         };
 
-        // Paleta de cores disponíveis para os botões do Operador
         const todasCores = [
             'bg-blue-500', 'bg-emerald-500', 'bg-rose-500', 'bg-amber-500', 
             'bg-purple-500', 'bg-orange-500', 'bg-pink-500', 'bg-indigo-500', 
@@ -110,7 +108,6 @@
             const produtoCod = produtoSelecionado.split(' - ')[0] || "";
             const lote = document.getElementById('lote').value.toUpperCase();
             
-            // Captura das metas
             const metaTurnoD = parseInt(document.getElementById('metaTurnoD').value) || 0;
             const metaTurnoN = parseInt(document.getElementById('metaTurnoN').value) || 0;
             const metaTotal = metaTurnoD + metaTurnoN;
@@ -130,7 +127,6 @@
                 return;
             }
 
-            // LÓGICA DA COR AUTOMÁTICA
             const coresDisponiveis = todasCores.filter(cor => !coresEmUso.includes(cor));
             const corSorteada = coresDisponiveis.length > 0 
                 ? coresDisponiveis[Math.floor(Math.random() * coresDisponiveis.length)]
@@ -157,7 +153,8 @@
                     status: 'Aberta', 
                     paletesFeitos: 0,
                     fardosParciais: 0,
-                    dataLancamento: serverTimestamp()
+                    dataLancamento: serverTimestamp(),
+                    metaExportadaParaExcel: false // Gatilho de sincronização inicial
                 });
                 
                 document.getElementById('formOP').reset(); 
@@ -192,7 +189,7 @@
                     <tr>
                         <td colspan="8" class="p-8 text-center text-slate-500">
                             <svg class="mx-auto h-12 w-12 text-slate-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 022 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                             </svg>
                             <p class="text-base font-medium">Nenhuma OP ativa no momento.</p>
                         </td>
@@ -273,7 +270,6 @@
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
 
-    <!-- Navbar Profissional -->
     <nav class="bg-slate-900 text-white shadow-lg border-b border-slate-700">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between items-center h-16">
@@ -294,7 +290,6 @@
 
     <div class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
         
-        <!-- Bloco de Lançamento -->
         <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div class="bg-slate-50 border-b border-slate-200 px-6 py-4">
                 <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
@@ -306,7 +301,6 @@
             
             <div class="p-6">
                 <form id="formOP" class="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    <!-- Linha 1 -->
                     <div class="col-span-1 md:col-span-2">
                         <label class="block text-sm font-semibold text-slate-700 mb-1.5">Produto</label>
                         <select id="produto" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow outline-none" required></select>
@@ -322,7 +316,6 @@
                         <input type="number" id="qtdPorPalete" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-shadow outline-none" required>
                     </div>
 
-                    <!-- Linha 2 -->
                     <div>
                         <label class="block text-sm font-semibold text-blue-700 mb-1.5">Meta Turno D</label>
                         <input type="number" id="metaTurnoD" class="w-full p-2.5 text-sm bg-blue-50/50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none" required>
@@ -353,7 +346,6 @@
             </div>
         </div>
 
-        <!-- Tabela de OPs -->
         <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div class="bg-slate-50 border-b border-slate-200 px-6 py-4 flex justify-between items-center">
                 <h2 class="text-lg font-semibold text-slate-800">Operações Ativas no Chão de Fábrica</h2>
@@ -374,7 +366,6 @@
                         </tr>
                     </thead>
                     <tbody id="tabelaOPsAbertas" class="divide-y divide-slate-100">
-                        <!-- Carregado via Firebase -->
                     </tbody>
                 </table>
             </div>

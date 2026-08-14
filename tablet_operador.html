@@ -62,7 +62,8 @@
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp, addDoc, getDoc, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        // ATUALIZAÇÃO: Adicionado setDoc na importação
+        import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc, increment, serverTimestamp, setDoc, getDoc, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
@@ -102,11 +103,14 @@
             const minutos = data.getMinutes();
             const tempoEmMinutos = (horas * 60) + minutos;
             
-            if (tempoEmMinutos >= 422 && tempoEmMinutos <= 1070) {
-                return "D";
-            } else {
-                return "N";
-            }
+            // Novas regras de período / turno
+            if (tempoEmMinutos >= 420 && tempoEmMinutos <= 680) return "P1"; // 07:00 às 11:20
+            if (tempoEmMinutos >= 681 && tempoEmMinutos <= 990) return "P2"; // 11:21 às 16:30
+            if (tempoEmMinutos >= 991 && tempoEmMinutos <= 1065) return "P3"; // 16:31 às 17:45
+            if (tempoEmMinutos >= 1066 && tempoEmMinutos <= 1260) return "P4"; // 17:46 às 21:00
+            
+            // Fora de turno oficial, mantém P4 como fallback ou crie regra extra se precisar
+            return "P4"; 
         }
 
         function calcularTurnoAtual() {
@@ -147,14 +151,12 @@
             return serverTimestamp();
         }
 
-        // Função ATUALIZADA: Conta a quantidade total de produtos (e não apenas paletes)
         async function calcularProducaoPorTurno(idOP) {
             try {
                 const qHist = query(histCollection, where("idOP", "==", idOP));
                 const snapshot = await getDocs(qHist);
                 
-                let turnoD = 0;
-                let turnoN = 0;
+                let prod = { P1: 0, P2: 0, P3: 0, P4: 0 };
                 
                 snapshot.forEach((doc) => {
                     const data = doc.data();
@@ -162,22 +164,20 @@
                     const quantidade = data.quantidade || 0;
                     
                     let turnoCorreto = turno;
-                    if (turno !== "D" && turno !== "N") {
+                    if (!["P1", "P2", "P3", "P4"].includes(turno)) {
                         const dataRegistro = data.dataRegistro?.toDate ? data.dataRegistro.toDate() : new Date();
                         turnoCorreto = determinarTurnoPorHorario(dataRegistro);
                     }
                     
-                    if (turnoCorreto === "D") {
-                        turnoD += quantidade;
-                    } else {
-                        turnoN += quantidade;
+                    if (prod[turnoCorreto] !== undefined) {
+                        prod[turnoCorreto] += quantidade;
                     }
                 });
                 
-                return { turnoD, turnoN };
+                return prod;
             } catch (error) {
                 console.error("Erro ao calcular produção por turno:", error);
-                return { turnoD: 0, turnoN: 0 };
+                return { P1: 0, P2: 0, P3: 0, P4: 0 };
             }
         }
 
@@ -205,11 +205,16 @@
                 }
                 
                 const docsDoTurno = snapshot.docs.filter(doc => {
-                    return doc.data().turno === turnoAtual;
+                    let docTurno = doc.data().turno;
+                    if (!["P1", "P2", "P3", "P4"].includes(docTurno)) {
+                        const dataRegistro = doc.data().dataRegistro?.toDate ? doc.data().dataRegistro.toDate() : new Date();
+                        docTurno = determinarTurnoPorHorario(dataRegistro);
+                    }
+                    return docTurno === turnoAtual;
                 });
 
                 if (docsDoTurno.length === 0) {
-                    mostrarFeedback(`📭 Nenhum lançamento no Turno ${turnoAtual} para ${produto}`, true);
+                    mostrarFeedback(`📭 Nenhum lançamento no ${turnoAtual} para ${produto}`, true);
                     return;
                 }
 
@@ -225,7 +230,7 @@
                 let tipoRemovido = ultimoDado.tipo === "Palete Cheio" ? "palete" : "avulso";
                 let quantidadeRemovida = ultimoDado.quantidade;
                 
-                if (confirm(`⚠️ Apagar ${tipoRemovido} de ${quantidadeRemovida} ${ultimoDado.medida || ''} da OP ${produto} (Turno ${turnoAtual})?`)) {
+                if (confirm(`⚠️ Apagar ${tipoRemovido} de ${quantidadeRemovida} ${ultimoDado.medida || ''} da OP ${produto} (Período ${turnoAtual})?`)) {
                     
                     await deleteDoc(doc(db, "historico_producao", ultimoDoc.id));
                     
@@ -235,7 +240,7 @@
                         await updateDoc(opRef, { fardosParciais: increment(-quantidadeRemovida) });
                     }
                     
-                    mostrarFeedback(`🗑️ ${tipoRemovido} removido (Turno ${turnoAtual})!`, false);
+                    mostrarFeedback(`🗑️ ${tipoRemovido} removido (${turnoAtual})!`, false);
                 }
                 
             } catch (error) {
@@ -262,8 +267,18 @@
             const dataLogica = getDataLogica();
             const dataAcao = obterDataRegistro();
 
+            // ATUALIZAÇÃO: Gerando ID Customizado Organizado
+            const nomeProdutoFormatado = produto.replace(/\s+/g, '-');
+            const dataFormatada = dataLogica.toISOString().split('T')[0]; // Pega YYYY-MM-DD
+            const agoraTempo = new Date();
+            const horaAtual = agoraTempo.toLocaleTimeString('pt-BR').replace(/:/g, ''); // HHMMSS
+            const ms = agoraTempo.getMilliseconds(); // Para evitar colisão em cliques rápidos
+            
+            const idDocumento = `${dataFormatada}_${nomeProdutoFormatado}_PALETE_${horaAtual}_${ms}`;
+
             try {
-                await addDoc(histCollection, {
+                // Trocado de addDoc para setDoc usando idDocumento
+                await setDoc(doc(db, "historico_producao", idDocumento), {
                     idOP: id,
                     produto: produto,
                     lote: lote,
@@ -313,8 +328,18 @@
             const dataLogica = getDataLogica();
             const dataAcao = obterDataRegistro();
 
+            // ATUALIZAÇÃO: Gerando ID Customizado Organizado
+            const nomeProdutoFormatado = produto.replace(/\s+/g, '-');
+            const dataFormatada = dataLogica.toISOString().split('T')[0]; 
+            const agoraTempo = new Date();
+            const horaAtual = agoraTempo.toLocaleTimeString('pt-BR').replace(/:/g, ''); 
+            const ms = agoraTempo.getMilliseconds(); 
+            
+            const idDocumento = `${dataFormatada}_${nomeProdutoFormatado}_AVULSO_${horaAtual}_${ms}`;
+
             try {
-                await addDoc(histCollection, {
+                // Trocado de addDoc para setDoc usando idDocumento
+                await setDoc(doc(db, "historico_producao", idDocumento), {
                     idOP: id,
                     produto: produto,
                     lote: lote,
@@ -430,16 +455,23 @@
                             </div>
                         </div>
 
-                        <!-- Placares de Turno (Somente Leitura) -->
-                        <div class="flex justify-center gap-2 mb-3 w-full">
-                            <div class="bg-blue-50 rounded-lg p-2 flex-1 border border-blue-200 text-center shadow-sm">
-                                <div class="font-bold text-blue-700 text-xs uppercase mb-0.5">Turno D</div>
-                                <div class="font-black text-blue-900 text-xl">${producaoTurnos.turnoD} <span class="text-xs text-blue-500 font-bold">/ ${op.metaTurnoD || 0}</span></div>
+                        <!-- Metas vs Produção dos 4 Períodos Integrados -->
+                        <div class="grid grid-cols-4 gap-1 w-full mb-3">
+                            <div class="bg-blue-50 rounded p-1 border border-blue-200 text-center shadow-sm" title="07:00 às 11:20">
+                                <div class="font-bold text-blue-700 text-[10px] uppercase">P1</div>
+                                <div class="font-black text-blue-900 text-sm">${producaoTurnos.P1} <span class="text-[10px] text-blue-500 font-bold">/ ${op.metaP1 || 0}</span></div>
                             </div>
-                            
-                            <div class="bg-purple-50 rounded-lg p-2 flex-1 border border-purple-200 text-center shadow-sm">
-                                <div class="font-bold text-purple-700 text-xs uppercase mb-0.5">Turno N</div>
-                                <div class="font-black text-purple-900 text-xl">${producaoTurnos.turnoN} <span class="text-xs text-purple-500 font-bold">/ ${op.metaTurnoN || 0}</span></div>
+                            <div class="bg-blue-50 rounded p-1 border border-blue-200 text-center shadow-sm" title="11:21 às 16:30">
+                                <div class="font-bold text-blue-700 text-[10px] uppercase">P2</div>
+                                <div class="font-black text-blue-900 text-sm">${producaoTurnos.P2} <span class="text-[10px] text-blue-500 font-bold">/ ${op.metaP2 || 0}</span></div>
+                            </div>
+                            <div class="bg-blue-50 rounded p-1 border border-blue-200 text-center shadow-sm" title="16:31 às 17:45">
+                                <div class="font-bold text-blue-700 text-[10px] uppercase">P3</div>
+                                <div class="font-black text-blue-900 text-sm">${producaoTurnos.P3} <span class="text-[10px] text-blue-500 font-bold">/ ${op.metaP3 || 0}</span></div>
+                            </div>
+                            <div class="bg-blue-50 rounded p-1 border border-blue-200 text-center shadow-sm" title="17:46 às 21:00">
+                                <div class="font-bold text-blue-700 text-[10px] uppercase">P4</div>
+                                <div class="font-black text-blue-900 text-sm">${producaoTurnos.P4} <span class="text-[10px] text-blue-500 font-bold">/ ${op.metaP4 || 0}</span></div>
                             </div>
                         </div>
 
@@ -510,11 +542,13 @@
             </div>
 
             <div class="flex items-center bg-gray-800 rounded-lg p-1 border border-gray-700">
-                <label for="seletorTurnoManual" class="text-xs font-bold text-gray-300 px-2 uppercase">Turno:</label>
+                <label for="seletorTurnoManual" class="text-xs font-bold text-gray-300 px-2 uppercase">Período:</label>
                 <select id="seletorTurnoManual" class="bg-gray-700 text-white text-base font-bold p-1 rounded focus:outline-none focus:ring-2 focus:ring-green-400">
                     <option value="AUTO">Automático</option>
-                    <option value="D">Turno D</option>
-                    <option value="N">Turno N</option>
+                    <option value="P1">P1 (07:00 - 11:20)</option>
+                    <option value="P2">P2 (11:21 - 16:30)</option>
+                    <option value="P3">P3 (16:31 - 17:45)</option>
+                    <option value="P4">P4 (17:46 - 21:00)</option>
                 </select>
             </div>
             

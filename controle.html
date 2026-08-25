@@ -12,10 +12,61 @@
         ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Modal styles */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 40;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-backdrop.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 1rem;
+            max-width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            z-index: 50;
+            animation: slideUp 0.3s ease-out;
+        }
+        
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        
+        .btn-lote {
+            transition: all 0.2s;
+        }
+        
+        .btn-lote:hover {
+            transform: scale(1.05);
+        }
+        
+        .btn-lote:active {
+            transform: scale(0.95);
+        }
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, setDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, setDoc, query, where, onSnapshot, serverTimestamp, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyC9LqqUDiR2CdIrLduAv58RaDhVnHMVvDI",
@@ -55,46 +106,129 @@
             'bg-cyan-500', 'bg-teal-500', 'bg-lime-600'
         ];
         let coresEmUso = [];
+        let OPAtualParaEdicao = null;
 
-        window.carregarProdutos = () => {
-            const selectProduto = document.getElementById('produto');
+        // Função para atualizar datas baseado no lote
+        window.atualizarDatasPorLote = (loteInput, dataProducaoInput, dataValidadeInput, produtoSelect) => {
+            const lote = document.getElementById(loteInput).value;
+            const produtoSelecionado = document.getElementById(produtoSelect).value;
+            
+            if (!lote || lote.length !== 4) return;
+            
+            const mes = parseInt(lote.substring(0, 2));
+            const dia = parseInt(lote.substring(2, 4));
+            
+            if (isNaN(mes) || isNaN(dia) || mes < 1 || mes > 12 || dia < 1 || dia > 31) return;
+            
+            const anoAtual = new Date().getFullYear();
+            
+            // Cria a data de produção
+            let dataProducao = new Date(anoAtual, mes - 1, dia);
+            
+            // Se a data for muito antiga (mais de 6 meses atrás), assume próximo ano
+            const hoje = new Date();
+            const seisMesesAtras = new Date();
+            seisMesesAtras.setMonth(seisMesesAtras.getMonth() - 6);
+            
+            if (dataProducao < seisMesesAtras) {
+                dataProducao = new Date(anoAtual + 1, mes - 1, dia);
+            }
+            
+            // Formata a data de produção
+            const dataProducaoFormatada = dataProducao.toISOString().split('T')[0];
+            document.getElementById(dataProducaoInput).value = dataProducaoFormatada;
+            
+            // Calcula a data de validade baseada no produto
+            if (produtoSelecionado && baseProdutos[produtoSelecionado]) {
+                const validadeAnos = baseProdutos[produtoSelecionado].validadeAnos;
+                const dataValidade = new Date(dataProducao);
+                dataValidade.setFullYear(dataValidade.getFullYear() + validadeAnos);
+                document.getElementById(dataValidadeInput).value = dataValidade.toISOString().split('T')[0];
+            }
+        };
+
+        // Função para avançar/voltar lote
+        window.ajustarLote = (dias, loteInput, dataProducaoInput, dataValidadeInput, produtoSelect) => {
+            const loteElement = document.getElementById(loteInput);
+            const loteAtual = loteElement.value;
+            
+            let dataBase;
+            if (loteAtual && loteAtual.length === 4) {
+                const mes = parseInt(loteAtual.substring(0, 2));
+                const dia = parseInt(loteAtual.substring(2, 4));
+                const anoAtual = new Date().getFullYear();
+                dataBase = new Date(anoAtual, mes - 1, dia);
+                
+                // Se a data for muito antiga, assume próximo ano
+                const hoje = new Date();
+                const seisMesesAtras = new Date();
+                seisMesesAtras.setMonth(seisMesesAtras.getMonth() - 6);
+                
+                if (dataBase < seisMesesAtras) {
+                    dataBase = new Date(anoAtual + 1, mes - 1, dia);
+                }
+            } else {
+                dataBase = new Date();
+            }
+            
+            // Adiciona/subtrai os dias
+            dataBase.setDate(dataBase.getDate() + dias);
+            
+            // Formata o novo lote (MMDD)
+            const novoMes = String(dataBase.getMonth() + 1).padStart(2, '0');
+            const novoDia = String(dataBase.getDate()).padStart(2, '0');
+            loteElement.value = `${novoMes}${novoDia}`;
+            
+            // Atualiza as datas
+            window.atualizarDatasPorLote(loteInput, dataProducaoInput, dataValidadeInput, produtoSelect);
+        };
+
+        window.carregarProdutos = (selectElementId = 'produto') => {
+            const selectProduto = document.getElementById(selectElementId);
+            if (!selectProduto) return;
+            
             selectProduto.innerHTML = '<option value="" disabled selected>Selecione um Produto...</option>';
             for (let prod in baseProdutos) {
                 selectProduto.innerHTML += `<option value="${prod}">${prod}</option>`;
             }
         };
 
-        window.aoSelecionarProduto = () => {
-            const produtoSelecionado = document.getElementById('produto').value;
+        window.aoSelecionarProduto = (selectId, loteId, qtdId, dataValidadeId, metaPrefix) => {
+            const produtoSelecionado = document.getElementById(selectId).value;
             if (!produtoSelecionado) return;
 
             const dados = baseProdutos[produtoSelecionado];
-            const hoje = new Date();
-
-            const mes = String(hoje.getMonth() + 1).padStart(2, '0');
-            const dia = String(hoje.getDate()).padStart(2, '0');
-            document.getElementById('lote').value = `${mes}${dia}`;
-
-            document.getElementById('qtdPorPalete').value = dados.fator;
-
-            const dataValidade = new Date();
-            dataValidade.setFullYear(dataValidade.getFullYear() + dados.validadeAnos);
-            document.getElementById('dataValidade').value = dataValidade.toISOString().split('T')[0];
             
-            document.getElementById('metaP1').placeholder = dados.medida;
-            document.getElementById('metaP2').placeholder = dados.medida;
-            document.getElementById('metaP3').placeholder = dados.medida;
-            document.getElementById('metaP4').placeholder = dados.medida;
+            // Só atualiza o lote se estiver vazio
+            const loteAtual = document.getElementById(loteId).value;
+            if (!loteAtual) {
+                const hoje = new Date();
+                const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+                const dia = String(hoje.getDate()).padStart(2, '0');
+                document.getElementById(loteId).value = `${mes}${dia}`;
+            }
+
+            document.getElementById(qtdId).value = dados.fator;
+
+            // Atualiza a data de validade baseada no lote atual
+            const dataProducaoId = selectId === 'produto' ? 'dataProducao' : 'editarDataProducao';
+            window.atualizarDatasPorLote(loteId, dataProducaoId, dataValidadeId, selectId);
+            
+            // Atualiza placeholders das metas
+            for (let i = 1; i <= 4; i++) {
+                const metaElement = document.getElementById(`${metaPrefix}${i}`);
+                if (metaElement) {
+                    metaElement.placeholder = dados.medida;
+                }
+            }
         };
 
         let enviandoOP = false;
 
         window.lancarOP = async (e) => {
-            // CORREÇÃO: Previne o comportamento padrão do formulário
             e.preventDefault(); 
-            e.stopPropagation(); // Impede propagação do evento
+            e.stopPropagation();
             
-            // CORREÇÃO: Verifica se já está enviando para evitar duplicação
             if (enviandoOP) {
                 console.log("⚠️ Envio bloqueado: já existe um lançamento em andamento");
                 return false;
@@ -146,18 +280,15 @@
                 ? coresDisponiveis[Math.floor(Math.random() * coresDisponiveis.length)]
                 : todasCores[Math.floor(Math.random() * todasCores.length)];
 
-            // CORREÇÃO: Adiciona milissegundos ao ID para garantir unicidade
             const timestamp = new Date().getTime();
             const nomeProdutoFormatado = produtoNome.replace(/\s+/g, '-');
             const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour12: false }).replace(/:/g, '');
             
-            // ID com milissegundos para evitar duplicação
             const idDocumentoCustomizado = `${dataProducao}_${produtoCod}_${nomeProdutoFormatado}_${horaAtual}_${timestamp}`;
             
             console.log("📝 ID do documento:", idDocumentoCustomizado);
 
             try {
-                // CORREÇÃO: Verifica primeiro se o documento já existe
                 const docRef = doc(db, "ordens_producao", idDocumentoCustomizado);
                 
                 await setDoc(docRef, {
@@ -194,7 +325,6 @@
                 console.error("❌ Erro ao lançar OP: ", error);
                 alert("Erro ao lançar OP: " + error.message);
             } finally {
-                // CORREÇÃO: Garante que o botão volte ao normal
                 setTimeout(() => {
                     enviandoOP = false;
                     if(btnSubmit) {
@@ -203,10 +333,93 @@
                         btnSubmit.classList.remove('opacity-70', 'cursor-not-allowed');
                     }
                     console.log("✅ Botão liberado para novo lançamento");
-                }, 2000); // Aumentado para 2 segundos para garantir
+                }, 2000);
             }
             
-            return false; // Garante que não haverá submissão dupla
+            return false;
+        };
+
+        // Função para abrir modal de edição
+        window.abrirModalEdicao = (id, op) => {
+            OPAtualParaEdicao = id;
+            
+            // Preenche o modal com os dados atuais
+            document.getElementById('editarProduto').innerHTML = '';
+            for (let prod in baseProdutos) {
+                const selected = (prod === `${op.codigo} - ${op.produto}`) ? 'selected' : '';
+                document.getElementById('editarProduto').innerHTML += `<option value="${prod}" ${selected}>${prod}</option>`;
+            }
+            
+            document.getElementById('editarLote').value = op.lote;
+            document.getElementById('editarMetaP1').value = op.metaP1 || 0;
+            document.getElementById('editarMetaP2').value = op.metaP2 || 0;
+            document.getElementById('editarMetaP3').value = op.metaP3 || 0;
+            document.getElementById('editarMetaP4').value = op.metaP4 || 0;
+            document.getElementById('editarQtdPorPalete').value = op.qtdPorPalete;
+            document.getElementById('editarDataProducao').value = op.dataProducao;
+            document.getElementById('editarDataValidade').value = op.dataValidade;
+            
+            // Mostra o modal
+            document.getElementById('modalEdicao').classList.add('active');
+        };
+
+        window.fecharModalEdicao = () => {
+            document.getElementById('modalEdicao').classList.remove('active');
+            OPAtualParaEdicao = null;
+        };
+
+        window.salvarEdicao = async () => {
+            if (!OPAtualParaEdicao) return;
+            
+            const btnSalvar = document.getElementById('btnSalvarEdicao');
+            btnSalvar.disabled = true;
+            btnSalvar.innerHTML = 'Salvando...';
+            
+            try {
+                const produtoSelecionado = document.getElementById('editarProduto').value;
+                const produtoNome = produtoSelecionado.split(' - ')[1] || produtoSelecionado;
+                const produtoCod = produtoSelecionado.split(' - ')[0] || "";
+                const lote = document.getElementById('editarLote').value.toUpperCase();
+                
+                const metaP1 = parseInt(document.getElementById('editarMetaP1').value) || 0;
+                const metaP2 = parseInt(document.getElementById('editarMetaP2').value) || 0;
+                const metaP3 = parseInt(document.getElementById('editarMetaP3').value) || 0;
+                const metaP4 = parseInt(document.getElementById('editarMetaP4').value) || 0;
+                
+                const metaTotal = metaP1 + metaP2 + metaP3 + metaP4;
+                const qtdPorPalete = parseInt(document.getElementById('editarQtdPorPalete').value);
+                const dataProducao = document.getElementById('editarDataProducao').value;
+                const dataValidade = document.getElementById('editarDataValidade').value;
+                const medida = baseProdutos[produtoSelecionado] ? baseProdutos[produtoSelecionado].medida : 'UN';
+                
+                const docRef = doc(db, "ordens_producao", OPAtualParaEdicao);
+                
+                await updateDoc(docRef, {
+                    codigo: produtoCod,
+                    produto: produtoNome,
+                    lote: lote,
+                    medida: medida,
+                    metaP1: metaP1,
+                    metaP2: metaP2,
+                    metaP3: metaP3,
+                    metaP4: metaP4,
+                    metaTotal: metaTotal,
+                    qtdPorPalete: qtdPorPalete,
+                    dataProducao: dataProducao,
+                    dataValidade: dataValidade
+                });
+                
+                console.log("✅ OP atualizada com sucesso!");
+                alert("OP atualizada com sucesso!");
+                fecharModalEdicao();
+                
+            } catch (error) {
+                console.error("❌ Erro ao atualizar OP: ", error);
+                alert("Erro ao atualizar OP: " + error.message);
+            } finally {
+                btnSalvar.disabled = false;
+                btnSalvar.innerHTML = 'Salvar Alterações';
+            }
         };
 
         const q = query(opsCollection, where("status", "==", "Aberta"));
@@ -270,9 +483,14 @@
                             </div>
                         </td>
                         <td class="p-4 align-middle text-center">
-                            <button onclick="excluirOP('${id}')" class="text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-2 rounded-lg transition-colors tooltip relative group" title="Cancelar OP">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                            </button>
+                            <div class="flex gap-2 justify-center">
+                                <button onclick='abrirModalEdicao("${id}", ${JSON.stringify(op)})' class="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition-colors" title="Editar OP">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                </button>
+                                <button onclick="excluirOP('${id}')" class="text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-2 rounded-lg transition-colors" title="Cancelar OP">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                 `;
@@ -295,26 +513,39 @@
             }
         };
 
-        // CORREÇÃO: Configuração inicial e listener ÚNICO do formulário
         window.onload = () => {
             document.getElementById('dataProducao').valueAsDate = new Date();
             carregarProdutos();
             
-            // CORREÇÃO: Remove listeners duplicados e adiciona apenas um
             const form = document.getElementById('formOP');
-            
-            // Remove listeners antigos (se houver)
             form.removeEventListener('submit', window.lancarOP);
-            
-            // Adiciona o listener uma única vez
             form.addEventListener('submit', window.lancarOP);
+            
+            // Adiciona listeners para os selects de edição
+            document.getElementById('editarProduto').addEventListener('change', function() {
+                aoSelecionarProduto('editarProduto', 'editarLote', 'editarQtdPorPalete', 'editarDataValidade', 'editarMetaP');
+            });
+            
+            // Adiciona listener para atualizar datas quando o lote for alterado manualmente
+            document.getElementById('lote').addEventListener('input', function() {
+                if (this.value.length === 4) {
+                    window.atualizarDatasPorLote('lote', 'dataProducao', 'dataValidade', 'produto');
+                }
+            });
+            
+            document.getElementById('editarLote').addEventListener('input', function() {
+                if (this.value.length === 4) {
+                    window.atualizarDatasPorLote('editarLote', 'editarDataProducao', 'editarDataValidade', 'editarProduto');
+                }
+            });
             
             console.log("✅ Sistema inicializado - Aguardando lançamentos...");
         };
 
-        // CORREÇÃO: Remove listeners duplicados do produto
         document.getElementById('produto').removeEventListener('change', window.aoSelecionarProduto);
-        document.getElementById('produto').addEventListener('change', window.aoSelecionarProduto);
+        document.getElementById('produto').addEventListener('change', function() {
+            aoSelecionarProduto('produto', 'lote', 'qtdPorPalete', 'dataValidade', 'metaP');
+        });
         
     </script>
 </head>
@@ -358,7 +589,15 @@
 
                     <div>
                         <label class="block text-sm font-semibold text-slate-700 mb-1.5">Lote</label>
-                        <input type="text" id="lote" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg uppercase focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono transition-shadow outline-none" placeholder="Ex: 0825" required>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="ajustarLote(-1, 'lote', 'dataProducao', 'dataValidade', 'produto')" class="btn-lote bg-slate-200 hover:bg-slate-300 text-slate-700 p-2 rounded-lg" title="Voltar um dia">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                            </button>
+                            <input type="text" id="lote" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg uppercase focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono transition-shadow outline-none text-center" placeholder="Ex: 0825" required>
+                            <button type="button" onclick="ajustarLote(1, 'lote', 'dataProducao', 'dataValidade', 'produto')" class="btn-lote bg-slate-200 hover:bg-slate-300 text-slate-700 p-2 rounded-lg" title="Avançar um dia">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                            </button>
+                        </div>
                     </div>
 
                     <div>
@@ -437,5 +676,92 @@
         </div>
 
     </div>
+
+    <!-- Modal de Edição -->
+    <div id="modalEdicao" class="modal-backdrop">
+        <div class="modal-content bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4">
+            <div class="bg-slate-50 border-b border-slate-200 px-6 py-4 flex justify-between items-center rounded-t-2xl">
+                <h2 class="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                    Editar Ordem de Produção
+                </h2>
+                <button onclick="fecharModalEdicao()" class="text-slate-400 hover:text-slate-600 p-2 rounded-lg transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <div class="p-6">
+                <form id="formEdicao" onsubmit="event.preventDefault(); salvarEdicao();">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="col-span-1 md:col-span-2">
+                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">Produto</label>
+                            <select id="editarProduto" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none" required></select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">Lote</label>
+                            <div class="flex items-center gap-2">
+                                <button type="button" onclick="ajustarLote(-1, 'editarLote', 'editarDataProducao', 'editarDataValidade', 'editarProduto')" class="btn-lote bg-slate-200 hover:bg-slate-300 text-slate-700 p-2 rounded-lg" title="Voltar um dia">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                                </button>
+                                <input type="text" id="editarLote" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg uppercase focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono transition-shadow outline-none text-center" required>
+                                <button type="button" onclick="ajustarLote(1, 'editarLote', 'editarDataProducao', 'editarDataValidade', 'editarProduto')" class="btn-lote bg-slate-200 hover:bg-slate-300 text-slate-700 p-2 rounded-lg" title="Avançar um dia">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">Qtd por Palete (Fator)</label>
+                            <input type="number" id="editarQtdPorPalete" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none" required>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">Data de Produção</label>
+                            <input type="date" id="editarDataProducao" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none" required>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-1.5">Data de Validade</label>
+                            <input type="date" id="editarDataValidade" class="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none" required>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 bg-slate-100 p-4 rounded-xl border border-slate-200">
+                        <h3 class="text-sm font-bold text-slate-700 mb-3">Metas de Produção por Período</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-blue-700 mb-1">P1: 07:02 às 11:30</label>
+                                <input type="number" id="editarMetaP1" class="w-full p-2 text-sm bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" required>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-blue-700 mb-1">P2: 11:30 às 16:30</label>
+                                <input type="number" id="editarMetaP2" class="w-full p-2 text-sm bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" required>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-blue-700 mb-1">P3: 16:30 às 17:50</label>
+                                <input type="number" id="editarMetaP3" class="w-full p-2 text-sm bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" required>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-blue-700 mb-1">P4: 17:50 às 21:00</label>
+                                <input type="number" id="editarMetaP4" class="w-full p-2 text-sm bg-white border border-blue-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 flex justify-end gap-3">
+                        <button type="button" onclick="fecharModalEdicao()" class="px-6 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium text-sm rounded-lg transition-colors">
+                            Cancelar
+                        </button>
+                        <button type="submit" id="btnSalvarEdicao" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg shadow-sm shadow-blue-200 transition-all flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            Salvar Alterações
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
